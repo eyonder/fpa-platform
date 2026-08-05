@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+/*
+ * Tasarım jetonları (design tokens).
+ * Tailwind 4'te tema, ayrı bir JS dosyası yerine doğrudan CSS içinde tanımlanır.
+ * Renk eklemek/değiştirmek istediğinizde tek dokunacağınız yer burasıdır.
+ */
+@theme {
+  --color-paper: #f2f4f3;
+  --color-surface: #ffffff;
+  --color-ink: #101a18;
+  --color-muted: #6a7672;
+  --color-rule: #d6dcd9;
+  --color-ledger: #0e7c6b;
+  --color-ledger-soft: #e3efec;
+  --color-brick: #a6402f;
+  --color-brick-soft: #f6e7e4;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "JetBrains Mono", "Roboto Mono", Menlo, Consolas, monospace;
+}
+
+/*
+ * Marka fontu eklemek isterseniz: src/app/layout.tsx içinde `next/font/google`
+ * ile fontu yükleyip buradaki --font-sans değerini o değişkenle değiştirin.
+ */
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Finansal tablolarda rakamların alt alta hizalanması için. */
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
