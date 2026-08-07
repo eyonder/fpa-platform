@@ -1,3 +1,4 @@
+import { getGlobalStore } from "@/backend/core/global-store";
 import type { BudgetCategory, BudgetLine, BudgetLineInput } from "@/shared/types";
 
 /**
@@ -210,8 +211,13 @@ const seed: BudgetLine[] = [
 const key = (scenarioId: string, categoryId: string, month: number) =>
   `${scenarioId}::${categoryId}::${month}`;
 
-const store = new Map<string, BudgetLine>(
-  seed.map((line) => [key(line.scenarioId, line.categoryId, line.month), line]),
+// getGlobalStore kullanımı için bkz. auth/session.repository.ts'teki not.
+const store = getGlobalStore(
+  "budget-lines",
+  () =>
+    new Map<string, BudgetLine>(
+      seed.map((line) => [key(line.scenarioId, line.categoryId, line.month), line]),
+    ),
 );
 
 export const budgetLineRepository = {

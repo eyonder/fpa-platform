@@ -16,6 +16,16 @@
   --color-brick: #a6402f;
   --color-brick-soft: #f6e7e4;
 
+  /*
+   * Grafik renkleri: doğrulanmış (CVD-güvenli) kategorik paletin ilk iki
+   * yuvası — dataviz beceri setindeki validate_palette.js ile ışık modunda
+   * tüm ikili kombinasyonları geçtiği belgelenen sıradan alındı, tahmini
+   * hex değil. Bütçe = plan referansı (mavi); Gerçekleşen/Tahmin = tek bir
+   * seri, "bugün"e kadar dolu çizgi, sonrası kesikli (bkz. BudgetTrendChart).
+   */
+  --color-chart-budget: #2a78d6;
+  --color-chart-actual: #1baf7a;
+
   --font-sans:
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, sans-serif;

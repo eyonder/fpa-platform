@@ -1,4 +1,3 @@
-import { getActor } from "@/frontend/lib/session-store";
 import type { ApiResponse } from "@/shared/types";
 
 export class ApiError extends Error {
@@ -18,14 +17,16 @@ export class ApiError extends Error {
  * Bileşenlerin içine dağılmış `fetch` çağrıları yerine burayı kullanırız.
  * Yarın backend ayrı bir sunucuya (api.sirket.com) taşınırsa değişecek tek yer burasıdır.
  *
- * Her isteğe aktif "aktör"ün (bkz. session-store.ts / ActorSwitcher) tenant
- * ve kullanıcı kimliğini header olarak ekler — RBAC'i arayüzden canlı test
- * edebilmek için (gerçek auth'ta bu header'ların yerini oturum/token alır).
+ * Kimlik artık httpOnly bir oturum ÇEREZİYLE taşınır (bkz. backend/core/tenant.ts) —
+ * aynı-origin `fetch` istekleri çerezleri otomatik gönderdiği için burada
+ * elle bir şey eklemeye gerek YOK (eskiden burada x-user-id/x-tenant-id
+ * header'ları enjekte edilirdi; gerçek girişle birlikte kaldırıldı, çünkü
+ * istemcinin kendi kimliğini header'la iddia etmesine izin vermek bir
+ * yetki yükseltme açığıydı).
  */
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const actor = getActor();
   // FormData gövdesinde Content-Type'ı BİZ set etmemeliyiz — tarayıcı,
   // multipart sınırını (boundary) kendisi ekler; elle "application/json"
   // koyarsak dosya yükleme sunucuda parse edilemez.
@@ -35,8 +36,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
-      "x-tenant-id": actor.tenantId,
-      "x-user-id": actor.userId,
       ...init?.headers,
     },
   });

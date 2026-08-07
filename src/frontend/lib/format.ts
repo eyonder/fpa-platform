@@ -10,6 +10,16 @@ export function formatAmount(value: number, currency?: string): string {
   return currency ? `${formatted} ${currency}` : formatted;
 }
 
+const compactFormatter = new Intl.NumberFormat("tr-TR", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+/** Grafik eksenleri gibi dar alanlar için: 1.250.000 -> "1,3 Mn". */
+export function formatCompactAmount(value: number): string {
+  return compactFormatter.format(value);
+}
+
 export function formatDate(iso: string): string {
   return new Intl.DateTimeFormat("tr-TR", {
     day: "2-digit",

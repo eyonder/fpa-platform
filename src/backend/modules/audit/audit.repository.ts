@@ -1,3 +1,4 @@
+import { getGlobalStore } from "@/backend/core/global-store";
 import type { AuditLogEntry } from "@/shared/types";
 
 /**
@@ -8,9 +9,11 @@ import type { AuditLogEntry } from "@/shared/types";
  * politikası TANIMLANMAMIŞ bir RLS tablosuydu; buradaki `record`'un sadece
  * `push` yapıp hiçbir "update"/"delete" metodu SUNMAMASI, o kısıtın bu
  * bellek-içi katmandaki karşılığıdır.
+ *
+ * `getGlobalStore` kullanımı için bkz. auth/session.repository.ts'teki not.
  */
 
-const entries: AuditLogEntry[] = [];
+const entries = getGlobalStore("audit-entries", () => [] as AuditLogEntry[]);
 
 export const auditRepository = {
   async record(entry: AuditLogEntry): Promise<void> {

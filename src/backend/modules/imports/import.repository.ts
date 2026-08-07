@@ -1,9 +1,11 @@
+import { getGlobalStore } from "@/backend/core/global-store";
 import type { ImportBatch } from "@/shared/types";
 
 /**
  * VERİ ERİŞİM KATMANI (Repository).
  *
  * Şu an bellekte sahte veri döner (bkz. scenario.repository.ts'teki not).
+ * `getGlobalStore` kullanımı için bkz. auth/session.repository.ts'teki not.
  *
  * `rawGrids`, batch'in henüz eşleştirilmemiş HAM satırlarını tutar — kullanıcı
  * kolon eşleştirmesini değiştirdiğinde (remap), dosyayı yeniden yüklemeden
@@ -16,8 +18,8 @@ interface RawGrid {
   rows: string[][];
 }
 
-const batches = new Map<string, ImportBatch>();
-const rawGrids = new Map<string, RawGrid>();
+const batches = getGlobalStore("import-batches", () => new Map<string, ImportBatch>());
+const rawGrids = getGlobalStore("import-raw-grids", () => new Map<string, RawGrid>());
 
 export const importRepository = {
   async save(batch: ImportBatch): Promise<void> {

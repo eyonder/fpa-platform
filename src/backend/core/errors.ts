@@ -28,3 +28,10 @@ export class ForbiddenError extends AppError {
     super("FORBIDDEN", message, 403);
   }
 }
+
+/** "Kimsin" bilinmiyor (401) — ForbiddenError'dan (403, "kimsin ama yetkin yok") farklı. */
+export class UnauthorizedError extends AppError {
+  constructor(message = "Oturum bulunamadı. Lütfen giriş yapın.") {
+    super("UNAUTHORIZED", message, 401);
+  }
+}

@@ -1,3 +1,4 @@
+import { getGlobalStore } from "@/backend/core/global-store";
 import type { Scenario } from "@/shared/types";
 
 import type { CreateScenarioInput, ListScenariosQuery } from "./scenario.schema";
@@ -8,6 +9,9 @@ import type { CreateScenarioInput, ListScenariosQuery } from "./scenario.schema"
  * Şu an bellekte sahte veri döner. Prisma bağlandığında SADECE bu dosya değişir;
  * service, route ve UI kodlarına dokunulmaz. Ayrıca her sorgu tenantId ile
  * filtrelenir — bu, PostgreSQL RLS'in uygulama tarafındaki ikinci savunma hattıdır.
+ *
+ * `getGlobalStore` kullanımı için bkz. auth/session.repository.ts'teki not
+ * (route handler ile server component arasında paylaşılan gerçek tekil state).
  */
 
 const seed: Scenario[] = [
@@ -98,7 +102,10 @@ const seed: Scenario[] = [
   },
 ];
 
-const store = new Map<string, Scenario>(seed.map((s) => [s.id, s]));
+const store = getGlobalStore(
+  "scenarios",
+  () => new Map<string, Scenario>(seed.map((s) => [s.id, s])),
+);
 
 export const scenarioRepository = {
   async findMany(tenantId: string, query: ListScenariosQuery): Promise<Scenario[]> {

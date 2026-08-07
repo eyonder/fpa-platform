@@ -1,5 +1,6 @@
 export type { ApiFailure, ApiResponse, ApiSuccess } from "./api";
 export type { AuditAction, AuditLogEntry, AuditSource } from "./audit";
+export type { AuthenticatedUser } from "./auth";
 export type {
   BudgetCategory,
   BudgetCategoryType,
@@ -13,6 +14,7 @@ export type {
   ConsolidationReport,
   ConsolidationRow,
 } from "./consolidation";
+export type { DashboardKpis, DashboardMonthPoint, DashboardSummary } from "./dashboard";
 export type {
   ForecastCategoryResult,
   ForecastLine,

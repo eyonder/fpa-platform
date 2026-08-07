@@ -1,16 +1,31 @@
 import Link from "next/link";
 
-import { ActorSwitcher } from "@/frontend/components/ActorSwitcher";
+import { LogoutButton } from "@/frontend/components/LogoutButton";
+import { ROLE_LABELS } from "@/frontend/lib/role-labels";
+import type { Role } from "@/shared/types";
 
 const NAV = [
   { href: "/", label: "Genel Bakış" },
+  { href: "/rapor", label: "Rapor" },
   { href: "/senaryolar", label: "Senaryolar" },
   { href: "/butce-girisi", label: "Bütçe Girişi" },
   { href: "/ice-aktarma", label: "İçe Aktarma" },
   { href: "/denetim-kaydi", label: "Denetim Kaydı" },
 ];
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+interface AppShellUser {
+  name: string;
+  role: Role;
+  tenantId: string;
+}
+
+export function AppShell({
+  user,
+  children,
+}: {
+  user: AppShellUser;
+  children: React.ReactNode;
+}) {
   return (
     <div className="min-h-dvh">
       <header className="border-b border-rule bg-surface">
@@ -34,7 +49,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             ))}
           </nav>
 
-          <ActorSwitcher />
+          <div className="ml-auto flex items-center gap-3">
+            <span className="tabular rounded-full bg-ledger-soft px-3 py-1 text-xs text-ledger">
+              {user.name} · {ROLE_LABELS[user.role]} · {user.tenantId}
+            </span>
+            <LogoutButton />
+          </div>
         </div>
         {/* Muhasebe defterlerindeki toplam çizgisi: ince + kalın ikili kural. */}
         <div className="h-px bg-rule" />
