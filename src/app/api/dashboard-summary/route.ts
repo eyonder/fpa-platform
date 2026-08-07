@@ -1,5 +1,5 @@
 import { handleRoute, ok } from "@/backend/core/http";
-import { getRequestContext } from "@/backend/core/tenant";
+import { withTenantContext } from "@/backend/core/tenant";
 import { dashboardSummarySchema } from "@/backend/modules/dashboard/dashboard.schema";
 import { dashboardService } from "@/backend/modules/dashboard/dashboard.service";
 
@@ -14,10 +14,11 @@ import { dashboardService } from "@/backend/modules/dashboard/dashboard.service"
  * Salt okunur, toplu bir görünüm — budget-lines'ı okuyabilen herkes (tüm
  * roller) görebilir; ayrı bir RBAC izni gerektirmez.
  */
-export const GET = handleRoute(async (request: Request) => {
-  const { tenantId } = await getRequestContext(request);
-  const params = Object.fromEntries(new URL(request.url).searchParams);
-  const query = dashboardSummarySchema.parse(params);
+export const GET = handleRoute((request: Request) =>
+  withTenantContext(request, async ({ tenantId }) => {
+    const params = Object.fromEntries(new URL(request.url).searchParams);
+    const query = dashboardSummarySchema.parse(params);
 
-  return ok(await dashboardService.getSummary(tenantId, query));
-});
+    return ok(await dashboardService.getSummary(tenantId, query));
+  }),
+);

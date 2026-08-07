@@ -1,6 +1,6 @@
 import { assertPermission } from "@/backend/core/authorize";
 import { handleRoute, ok } from "@/backend/core/http";
-import { getRequestContext } from "@/backend/core/tenant";
+import { withTenantContext } from "@/backend/core/tenant";
 import {
   bulkUpsertBudgetLinesSchema,
   listBudgetLinesSchema,
@@ -13,19 +13,23 @@ import { budgetLineService } from "@/backend/modules/budget-lines/budget-line.se
  * Buraya asla iş mantığı (if/else hesap kuralı) yazılmaz.
  */
 
-export const GET = handleRoute(async (request: Request) => {
-  const { tenantId } = await getRequestContext(request);
-  const params = Object.fromEntries(new URL(request.url).searchParams);
-  const query = listBudgetLinesSchema.parse(params);
+export const GET = handleRoute((request: Request) =>
+  withTenantContext(request, async ({ tenantId }) => {
+    const params = Object.fromEntries(new URL(request.url).searchParams);
+    const query = listBudgetLinesSchema.parse(params);
 
-  return ok(await budgetLineService.getSheet(tenantId, query.scenarioId));
-});
+    return ok(await budgetLineService.getSheet(tenantId, query.scenarioId));
+  }),
+);
 
-export const POST = handleRoute(async (request: Request) => {
-  const context = await getRequestContext(request);
-  assertPermission(context.role, "budget-line:write");
+export const POST = handleRoute((request: Request) =>
+  withTenantContext(request, async (context) => {
+    assertPermission(context.role, "budget-line:write");
 
-  const input = bulkUpsertBudgetLinesSchema.parse(await request.json());
+    const input = bulkUpsertBudgetLinesSchema.parse(await request.json());
 
-  return ok(await budgetLineService.bulkUpsert(context, input.scenarioId, input.lines));
-});
+    return ok(
+      await budgetLineService.bulkUpsert(context, input.scenarioId, input.lines),
+    );
+  }),
+);

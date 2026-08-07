@@ -1,32 +1,78 @@
-import { getGlobalStore } from "@/backend/core/global-store";
+import { prisma, prismaAsTxClient } from "@/backend/core/prisma-client";
+import type { PrismaClientOrTx } from "@/backend/core/prisma-client";
+import { fromMinorUnits, toMinorUnits } from "@/shared/lib/money";
 import type { AuditLogEntry } from "@/shared/types";
+import type { AuditLog as AuditLogRow } from "@prisma/client";
 
 /**
- * VERİ ERİŞİM KATMANI (Repository).
+ * VERİ ERİŞİM KATMANI (Repository) — Prisma/PostgreSQL.
  *
- * Şu an bellekte, DEĞİŞTİRİLEMEZ (append-only) bir liste olarak tutulur —
- * gerçek AuditLogs tablosu (bkz. proje kökündeki Prisma şeması) UPDATE/DELETE
- * politikası TANIMLANMAMIŞ bir RLS tablosuydu; buradaki `record`'un sadece
- * `push` yapıp hiçbir "update"/"delete" metodu SUNMAMASI, o kısıtın bu
- * bellek-içi katmandaki karşılığıdır.
+ * `AuditLog`, RLS'e tabi ama SADECE SELECT+INSERT politikası olan tek tablo
+ * (bkz. `prisma/migrations/*_enable_rls/migration.sql`) — UPDATE/DELETE
+ * politikası TANIMLANMAMIŞ, yani veritabanı seviyesinde REDDEDİLİR. Bu
+ * repository'nin de sadece `record` (INSERT) ve `findByTenant` (SELECT)
+ * SUNMASI, o DB kısıtının API yüzeyindeki karşılığıdır — burada bilerek
+ * hiçbir "update"/"delete" metodu YOK.
  *
- * `getGlobalStore` kullanımı için bkz. auth/session.repository.ts'teki not.
+ * `oldValue`/`newValue` DB'de kuruş (`BigInt`) saklanır — bkz.
+ * `budget-line.repository.ts`teki aynı disiplinin yorumu.
  */
 
-const entries = getGlobalStore("audit-entries", () => [] as AuditLogEntry[]);
+function toAuditLogEntry(row: AuditLogRow): AuditLogEntry {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    userId: row.userId,
+    userName: row.userName,
+    action: row.action,
+    entityType: row.entityType as "BudgetLine",
+    scenarioId: row.scenarioId,
+    categoryId: row.categoryId,
+    month: row.month,
+    fieldName: row.fieldName as "amount",
+    oldValue: fromMinorUnits(Number(row.oldValue)),
+    newValue: fromMinorUnits(Number(row.newValue)),
+    occurredAt: row.occurredAt.toISOString(),
+    source: row.source,
+  };
+}
 
 export const auditRepository = {
-  async record(entry: AuditLogEntry): Promise<void> {
-    entries.push(entry);
+  async record(
+    entry: AuditLogEntry,
+    client: PrismaClientOrTx = prismaAsTxClient,
+  ): Promise<void> {
+    await client.auditLog.create({
+      data: {
+        id: entry.id,
+        tenantId: entry.tenantId,
+        userId: entry.userId,
+        userName: entry.userName,
+        action: entry.action,
+        entityType: entry.entityType,
+        scenarioId: entry.scenarioId,
+        categoryId: entry.categoryId,
+        month: entry.month,
+        fieldName: entry.fieldName,
+        oldValue: BigInt(toMinorUnits(entry.oldValue)),
+        newValue: BigInt(toMinorUnits(entry.newValue)),
+        occurredAt: new Date(entry.occurredAt),
+        source: entry.source,
+      },
+    });
   },
 
   async findByTenant(
     tenantId: string,
     filters: { scenarioId?: string } = {},
   ): Promise<AuditLogEntry[]> {
-    return entries
-      .filter((e) => e.tenantId === tenantId)
-      .filter((e) => !filters.scenarioId || e.scenarioId === filters.scenarioId)
-      .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+    const rows = await prisma.auditLog.findMany({
+      where: {
+        tenantId,
+        ...(filters.scenarioId ? { scenarioId: filters.scenarioId } : {}),
+      },
+      orderBy: { occurredAt: "desc" },
+    });
+    return rows.map(toAuditLogEntry);
   },
 };

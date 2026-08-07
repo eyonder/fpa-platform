@@ -5,9 +5,9 @@ Next.js 16 · TypeScript · Tailwind CSS 4 · ESLint 9 · Prettier 3
 Bütçe planlama, sapma analizi, forecast, çok şirketli konsolidasyon, giriş/oturum
 yönetimi, RBAC, denetim (audit) izi ve Mizan/Muavin içe aktarma sihirbazı içeren bir
 FP&A ürünü. Arayüz kodu ile sunucu kodu ayrı klasörlerde durur ve bu ayrım ESLint
-tarafından zorunlu kılınır. Veri katmanı şu an bellek-içi (in-memory) demo
-repository'lerdir — gerçek bir veritabanına bağlanmadan tüm iş mantığını uçtan uca
-deneyebilirsiniz (bkz. sondaki "Henüz eklenmedi" tablosu).
+tarafından zorunlu kılınır. Veri katmanı gerçek bir PostgreSQL veritabanıdır
+(Prisma ORM), çok kiracılık PostgreSQL **Row-Level Security (RLS)** ile veritabanı
+seviyesinde zorunlu kılınır — bkz. "Veri katmanı ve çok kiracılık" bölümü.
 
 ---
 
@@ -15,8 +15,11 @@ deneyebilirsiniz (bkz. sondaki "Henüz eklenmedi" tablosu).
 
 ```bash
 npm install
-cp .env.example .env.local
-npm run dev          # http://localhost:3000
+docker compose up -d          # yerel PostgreSQL (bkz. docker-compose.yml)
+cp .env.example .env.local    # DATABASE_URL / APP_DATABASE_URL / DATABASE_URL_BYPASS_RLS doldurun
+npx prisma migrate dev        # şema + RLS politikalarını uygular
+npm run db:seed               # demo veriyi yükler
+npm run dev                   # http://localhost:3000
 ```
 
 `/giris` ekranından demo hesaplardan biriyle giriş yapın (şifre hepsinde aynı:
@@ -45,6 +48,10 @@ görebilirsiniz (bkz. "Modüller"deki RBAC satırı).
 | `npm run format`       | Prettier ile tüm dosyaları biçimlendirir             |
 | `npm run format:check` | Biçim bozuksa hata verir (CI için)                   |
 | `npm run check`        | Üçünü birden çalıştırır — commit öncesi bunu koşun   |
+| `npm run db:migrate`   | Yeni bir Prisma migration oluşturur + uygular         |
+| `npm run db:seed`      | Demo veriyi (yeniden) yükler — bkz. `prisma/seed.ts`  |
+| `npm run db:studio`    | Prisma Studio (veritabanını tarayıcıda görüntüle)     |
+| `npm run db:reset`     | Veritabanını sıfırlar, migration'ları + seed'i yeniden uygular |
 
 ---
 
@@ -75,6 +82,10 @@ oturum kurma arasına net bir genişletme noktası bırakıldı.
 ---
 
 ## Klasör yapısı
+
+Proje kökünde ayrıca `prisma/` (`schema.prisma`, `migrations/`, `seed.ts`) ve
+`docker-compose.yml` (yerel PostgreSQL) bulunur — `src/` dışında, çünkü Prisma CLI
+bunları oradan bekler.
 
 ```
 src/
@@ -110,8 +121,10 @@ src/
 │   └── styles/globals.css            Tailwind teması (@theme jetonları)
 │
 ├── backend/                          SUNUCU KATMANI
-│   ├── core/                         errors, http, logger, tenant, authorize (RBAC),
-│   │                                 request-context, rate-limit, global-store
+│   ├── core/                         errors, http, logger, tenant (withTenantContext),
+│   │                                 authorize (RBAC), request-context, rate-limit,
+│   │                                 prisma-client (RLS extension), tenant-context (ALS),
+│   │                                 global-store (Turbopack-güvenli singleton yardımcısı)
 │   ├── config/env.ts                 ortam değişkeni doğrulaması
 │   └── modules/
 │       ├── auth/                     login/logout/oturum + şifre sıfırlama
@@ -188,15 +201,51 @@ tek yoldur. Kilit kontrolü ve audit kaydı burada bir kere yazılır; yeni bir 
 eklerseniz mutlaka bu fonksiyonu çağırmalı, `budgetLineRepository.bulkUpsert`'i
 doğrudan çağırmamalıdır (aksi halde o yol audit'siz ve kilitsiz kalır).
 
-**Bellek-içi repository'ler `getGlobalStore` (`backend/core/global-store.ts`)
-kullanmak ZORUNDA**, düz modül-seviyesi `new Map()`/`[]` DEĞİL. Bunun nedeni
-teorik değil, canlı yaşanmış bir hataydı: Next.js/Turbopack, Route Handler'ları
-(`app/api/**/route.ts`) ve Server Component'leri (`app/**/*.tsx`) FARKLI modül
-paketlerinde derleyebiliyor — `/api/auth/login`'in yazdığı oturum kaydı,
-`(app)/layout.tsx`'in server-side session kontrolünde "yokmuş" gibi görünüyordu,
-çünkü ikisi `session.repository.ts`'in iki ayrı kopyasına bakıyordu. `getGlobalStore`,
-`globalThis` üzerinde gerçek bir tekil (singleton) tutarak bunu çözer. Yeni bir
-bellek-içi repository eklerseniz bu deseni kullanın.
+---
+
+## Veri katmanı ve çok kiracılık
+
+Veri katmanı PostgreSQL + Prisma'dır (`prisma/schema.prisma`). Çok kiracılık İKİ
+katmanda uygulanır:
+
+1. **Uygulama katmanı**: her repository sorgusu hâlâ `tenantId` ile de filtrelenir
+   (ör. `scenario.repository.ts`).
+2. **Veritabanı katmanı (asıl savunma hattı)**: PostgreSQL **Row-Level Security**.
+   `Scenario`/`BudgetLine`/`AuditLog`/`ImportJob` tablolarında RLS aktif ve
+   **FORCE** edilmiş (bkz. `prisma/migrations/*_enable_rls/migration.sql`); her
+   sorgu, o transaction'ın ilk ifadesi olan `SET LOCAL app.current_tenant_id`
+   değerine göre filtrelenir. Bu değeri kim, ne zaman set eder:
+   - `backend/core/tenant-context.ts` — istek başına `AsyncLocalStorage` bağlamı
+     (`getGlobalStore` ile Turbopack-güvenli tekil, bkz. aşağıdaki not).
+   - `backend/core/tenant.ts`teki `withTenantContext(request, handler)` — TÜM API
+     route'larının kullandığı sarmalayıcı; `TenantContext.run()` ile bağlamı kurar.
+     **`.enterWith()` KASITLI OLARAK kullanılmıyor** — izole testlerle doğrulandı ki
+     bir `await`den SONRA çağrılan `enterWith`, çağıranın bunu asla görememesine yol
+     açıyor (bkz. `tenant-context.ts`teki ayrıntılı yorum).
+   - `backend/core/prisma-client.ts`teki Prisma Client Extension, bu bağlamı okuyup
+     `SET LOCAL`'i otomatik çalıştırır.
+
+**Üç ayrı Postgres rolü/bağlantısı VAR, KASITLI** (bkz. `.env.example` ve
+`prisma/migrations/*_enable_rls/migration.sql`'deki not): yerel Docker imajının
+bootstrap kullanıcısı (`fpa`) SUPERUSER'dır ve superuser'lar RLS'i HER ZAMAN atlar
+(`FORCE ROW LEVEL SECURITY` bile bunu değiştiremez) — bu yüzden uygulama çalışma
+zamanı ayrı, owner OLMAYAN bir rolle (`APP_DATABASE_URL` → `fpa_app`) bağlanır.
+Üçüncü rol (`DATABASE_URL_BYPASS_RLS` → `fpa_bypass_rls`, `BYPASSRLS` özniteliğiyle)
+SADECE `consolidation.service.ts` kullanır — o servis holding'in BİRDEN ÇOK alt
+şirketinin verisini TEK istekte okur, RLS'in "aktif bağlamda tek tenant" varsayımıyla
+temelden çelişir; servis kendi yetki kontrolünü (`requestingTenantId !== parent.id` →
+`ForbiddenError`) veriye dokunmadan ÖNCE zaten yapıyor.
+
+Çok adımlı, atomik yazma akışları (ör. `budgetLineService.bulkUpsert` — kilit
+kontrolü + audit kaydı + gerçek yazma) `backend/core/prisma-client.ts`teki
+`withTenantTransaction` ile TEK bir `$transaction` içinde çalışır; repository
+fonksiyonları bunun için opsiyonel bir `client: PrismaClientOrTx` parametresi alır.
+
+`backend/core/global-store.ts`teki `getGlobalStore` yardımcı fonksiyonu hâlâ
+YAŞIYOR — artık bellek-içi mock veri için DEĞİL, tek bir `PrismaClient` bağlantı
+havuzunu ve tek bir `AsyncLocalStorage` örneğini `globalThis` üzerinde gerçek birer
+singleton tutmak için (aynı Turbopack dual-bundle riski burada da geçerli — bkz. o
+dosyadaki güncellenmiş yorum).
 
 ---
 
@@ -243,10 +292,11 @@ detayları istemciye sızdırmaz.
 
 ## Henüz eklenmedi (bilinçli olarak)
 
+PostgreSQL + Prisma + RLS artık tamam (bkz. "Veri katmanı ve çok kiracılık" yukarıda)
+— aşağıdaki liste ondan sonra kalanlar içindir.
+
 | Alan               | Öneri                          | Notu                                                        |
 | ------------------- | ------------------------------- | -------------------------------------------------------------- |
-| Veritabanı         | PostgreSQL + Prisma            | Sadece `repository` dosyaları değişir (ve `getGlobalStore` gereksizleşir) |
-| Çok kiracılık      | PostgreSQL RLS                 | `tenant.ts` içindeki bağlam RLS oturum değişkenine bağlanır  |
 | Kimlik doğrulama sağlayıcısı | NextAuth / Clerk (opsiyonel) | Basit e-posta+şifre girişi zaten VAR (bkz. yukarıdaki tablo); bir SSO/sosyal login sağlayıcısına geçilirse sadece `auth.service.ts`/`getCurrentUser` değişir |
 | MFA (çok faktörlü doğrulama) | TOTP (ör. `otplib`) ya da SMS/e-posta kodu | `auth.service.ts`'teki `login` fonksiyonunda tam olarak nereye ekleneceği yorumla işaretli |
 | Oturum deposu      | Redis                          | Yatay ölçeklendiğinde (birden fazla sunucu örneği) bellek-içi oturum Map'i paylaşılmaz |

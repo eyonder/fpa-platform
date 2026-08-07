@@ -1,17 +1,15 @@
-import { getGlobalStore } from "@/backend/core/global-store";
+import { prisma } from "@/backend/core/prisma-client";
 
 /**
- * VERİ ERİŞİM KATMANI (Repository).
+ * VERİ ERİŞİM KATMANI (Repository) — Prisma/PostgreSQL.
  *
- * Şu an bellekte sahte veri döner (bkz. scenario.repository.ts'teki not).
- * Prisma bağlandığında bu, bir `Session` tablosuna (ya da Redis'e) dönüşür —
- * tek sunucu örneğinin ötesine (yatay ölçekleme) geçildiğinde bellek-içi
- * Map paylaşılmaz, bu yüzden bu dosya erken değişecek adaylardan biridir.
+ * `Session` RLS'e TABİ DEĞİLDİR (bkz. `prisma/schema.prisma`) — bu
+ * repository henüz tenant bağlamı kurulmadan ÖNCE sorgulanır (login,
+ * `getRequestContext`/`get-current-user.ts`'nin session çözümlemesi).
  *
- * `getGlobalStore` KULLANIMI ZORUNLU (düz `new Map()` DEĞİL): bu repository
- * hem route handler'lardan (login/logout) hem server component'ten
- * ((app)/layout.tsx, get-current-user.ts üzerinden) çağrılıyor — bkz.
- * backend/core/global-store.ts'teki gerçek olay.
+ * `createdAt`/`expiresAt` bu sözleşmede (ve `auth.constants.ts`'teki TTL
+ * hesaplarında) epoch-ms `number` olarak tutulur — DB'de `DateTime`, bu
+ * yüzden sınırda (boundary) `Date` ↔ `number` çevrimi burada yapılır.
  */
 
 export interface SessionRecord {
@@ -22,10 +20,21 @@ export interface SessionRecord {
   expiresAt: number;
 }
 
-const sessions = getGlobalStore(
-  "auth-sessions",
-  () => new Map<string, SessionRecord>(),
-);
+function toSessionRecord(row: {
+  id: string;
+  userId: string;
+  tenantId: string;
+  createdAt: Date;
+  expiresAt: Date;
+}): SessionRecord {
+  return {
+    id: row.id,
+    userId: row.userId,
+    tenantId: row.tenantId,
+    createdAt: row.createdAt.getTime(),
+    expiresAt: row.expiresAt.getTime(),
+  };
+}
 
 export const sessionRepository = {
   async create(
@@ -34,35 +43,36 @@ export const sessionRepository = {
     ttlMs: number,
   ): Promise<SessionRecord> {
     const now = Date.now();
-    const record: SessionRecord = {
-      id: crypto.randomUUID(),
-      userId,
-      tenantId,
-      createdAt: now,
-      expiresAt: now + ttlMs,
-    };
-    sessions.set(record.id, record);
-    return record;
+    const row = await prisma.session.create({
+      data: {
+        id: crypto.randomUUID(),
+        userId,
+        tenantId,
+        createdAt: new Date(now),
+        expiresAt: new Date(now + ttlMs),
+      },
+    });
+    return toSessionRecord(row);
   },
 
   async find(sessionId: string): Promise<SessionRecord | null> {
-    const record = sessions.get(sessionId);
-    if (!record) return null;
-    if (record.expiresAt < Date.now()) {
-      sessions.delete(sessionId);
+    const row = await prisma.session.findUnique({ where: { id: sessionId } });
+    if (!row) return null;
+    if (row.expiresAt.getTime() < Date.now()) {
+      await prisma.session.deleteMany({ where: { id: sessionId } });
       return null;
     }
-    return record;
+    return toSessionRecord(row);
   },
 
   async delete(sessionId: string): Promise<void> {
-    sessions.delete(sessionId);
+    // `deleteMany` KASITLI: kayıt yoksa sessizce hiçbir şey yapmaz (`delete`
+    // olmayan bir id için P2025 fırlatır) — eski Map.delete davranışıyla aynı.
+    await prisma.session.deleteMany({ where: { id: sessionId } });
   },
 
   /** Şifre değiştiğinde tüm oturumları düşürmek için (bkz. auth.service.ts resetPassword). */
   async deleteAllForUser(userId: string): Promise<void> {
-    for (const [id, record] of sessions) {
-      if (record.userId === userId) sessions.delete(id);
-    }
+    await prisma.session.deleteMany({ where: { userId } });
   },
 };

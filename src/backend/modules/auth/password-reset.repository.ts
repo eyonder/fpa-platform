@@ -1,10 +1,10 @@
-import { getGlobalStore } from "@/backend/core/global-store";
+import { prisma } from "@/backend/core/prisma-client";
 
 /**
- * VERİ ERİŞİM KATMANI (Repository).
+ * VERİ ERİŞİM KATMANI (Repository) — Prisma/PostgreSQL.
  *
- * Şu an bellekte sahte veri döner (bkz. scenario.repository.ts'teki not).
- * `getGlobalStore` kullanımı için bkz. session.repository.ts'teki not.
+ * `PasswordResetToken` RLS'e TABİ DEĞİLDİR — bkz. `session.repository.ts`teki
+ * not (aynı tenant-öncesi sorgulama gerekçesi).
  */
 
 export interface PasswordResetToken {
@@ -13,33 +13,26 @@ export interface PasswordResetToken {
   expiresAt: number;
 }
 
-const tokens = getGlobalStore(
-  "password-reset-tokens",
-  () => new Map<string, PasswordResetToken>(),
-);
-
 export const passwordResetRepository = {
   async create(userId: string, ttlMs: number): Promise<PasswordResetToken> {
-    const record: PasswordResetToken = {
-      token: crypto.randomUUID(),
-      userId,
-      expiresAt: Date.now() + ttlMs,
-    };
-    tokens.set(record.token, record);
-    return record;
+    const expiresAt = Date.now() + ttlMs;
+    const row = await prisma.passwordResetToken.create({
+      data: { token: crypto.randomUUID(), userId, expiresAt: new Date(expiresAt) },
+    });
+    return { token: row.token, userId: row.userId, expiresAt: row.expiresAt.getTime() };
   },
 
   async find(token: string): Promise<PasswordResetToken | null> {
-    const record = tokens.get(token);
-    if (!record) return null;
-    if (record.expiresAt < Date.now()) {
-      tokens.delete(token);
+    const row = await prisma.passwordResetToken.findUnique({ where: { token } });
+    if (!row) return null;
+    if (row.expiresAt.getTime() < Date.now()) {
+      await prisma.passwordResetToken.deleteMany({ where: { token } });
       return null;
     }
-    return record;
+    return { token: row.token, userId: row.userId, expiresAt: row.expiresAt.getTime() };
   },
 
   async consume(token: string): Promise<void> {
-    tokens.delete(token);
+    await prisma.passwordResetToken.deleteMany({ where: { token } });
   },
 };

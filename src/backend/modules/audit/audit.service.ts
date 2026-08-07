@@ -1,3 +1,5 @@
+import type { PrismaClientOrTx } from "@/backend/core/prisma-client";
+import { prismaAsTxClient } from "@/backend/core/prisma-client";
 import type { RequestContext } from "@/backend/core/tenant";
 import { budgetLineRepository } from "@/backend/modules/budget-lines/budget-line.repository";
 import { scenarioRepository } from "@/backend/modules/scenarios/scenario.repository";
@@ -32,6 +34,7 @@ export async function recordBudgetLineChanges(
   before: BudgetLine[],
   after: BudgetLineInput[],
   source: AuditSource,
+  client: PrismaClientOrTx = prismaAsTxClient,
 ): Promise<void> {
   const beforeByKey = new Map(
     before.map((l) => [`${l.categoryId}:${l.month}`, l.amount]),
@@ -60,7 +63,7 @@ export async function recordBudgetLineChanges(
       source,
     };
 
-    await auditRepository.record(entry);
+    await auditRepository.record(entry, client);
   }
 }
 

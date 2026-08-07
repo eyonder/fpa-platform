@@ -1,6 +1,6 @@
 import { assertPermission } from "@/backend/core/authorize";
 import { handleRoute, ok } from "@/backend/core/http";
-import { getRequestContext } from "@/backend/core/tenant";
+import { withTenantContext } from "@/backend/core/tenant";
 import { consolidateSchema } from "@/backend/modules/consolidation/consolidation.schema";
 import { consolidationService } from "@/backend/modules/consolidation/consolidation.service";
 
@@ -18,12 +18,13 @@ import { consolidationService } from "@/backend/modules/consolidation/consolidat
  * kontrolü ayrı bir katman: tenant doğru olsa bile DATA_ENTRY konsolidasyon
  * çalıştıramaz.
  */
-export const GET = handleRoute(async (request: Request) => {
-  const context = await getRequestContext(request);
-  assertPermission(context.role, "consolidation:run");
+export const GET = handleRoute((request: Request) =>
+  withTenantContext(request, async (context) => {
+    assertPermission(context.role, "consolidation:run");
 
-  const params = Object.fromEntries(new URL(request.url).searchParams);
-  const query = consolidateSchema.parse(params);
+    const params = Object.fromEntries(new URL(request.url).searchParams);
+    const query = consolidateSchema.parse(params);
 
-  return ok(await consolidationService.consolidate(context.tenantId, query));
-});
+    return ok(await consolidationService.consolidate(context.tenantId, query));
+  }),
+);

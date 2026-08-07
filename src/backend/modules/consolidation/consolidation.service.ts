@@ -1,4 +1,5 @@
 import { ForbiddenError, NotFoundError } from "@/backend/core/errors";
+import { prismaBypassRls } from "@/backend/core/prisma-client";
 import { budgetLineRepository } from "@/backend/modules/budget-lines/budget-line.repository";
 import { fxRateService } from "@/backend/modules/fx/fx-rate.service";
 import { organizationRepository } from "@/backend/modules/organizations/organization.repository";
@@ -38,10 +39,16 @@ export const consolidationService = {
 
     // Konsolidasyon, tenant sınırlarını BİLİNÇLİ olarak aşan tek işlemdir
     // (holding, alt şirketlerin verisini görür). Bu yüzden normal
-    // tenant-scope kontrolü yetmez: sadece holding'in KENDİ tenant'ı kendi
-    // konsolidasyonunu çalıştırabilir (bkz. organization.repository.ts'teki
-    // not — Prisma+RLS'e geçilince bunun karşılığı app_admin/BYPASSRLS'li,
-    // dar kapsamlı bir servis rolüdür).
+    // tenant-scope kontrolü YETMEZ: sadece holding'in KENDİ tenant'ı kendi
+    // konsolidasyonunu çalıştırabilir. Bu kontrol veriye dokunmadan ÖNCE
+    // yapılır — aşağıdaki `scenarioRepository.findMany`/
+    // `budgetLineRepository.findByScenario` çağrılarına BİLEREK
+    // `prismaBypassRls` geçirilir (RLS'in "aktif bağlamda tek tenant"
+    // varsayımıyla, holding'in BİRDEN ÇOK alt şirketin verisini TEK istekte
+    // okuması temelden çelişir) — bkz. `backend/core/prisma-client.ts`teki
+    // `prismaBypassRls` yorumu. Bu, "önce app-seviyesi kontrol, sonra RLS"
+    // ilkesinin BİLİNÇLİ istisnasıdır: burada RLS yerine SADECE bu kontrol
+    // veriyi korur, bu yüzden kontrolün EN BAŞTA ve ATLANAMAZ olması şart.
     if (requestingTenantId !== parent.id) {
       throw new ForbiddenError(
         "Bu konsolidasyonu sadece ana şirketin kendisi çalıştırabilir.",
@@ -63,10 +70,11 @@ export const consolidationService = {
     const missingOrganizations: ConsolidationMissingOrg[] = [];
 
     for (const org of contributors) {
-      const scenarios = await scenarioRepository.findMany(org.id, {
-        fiscalYear: query.fiscalYear,
-        kind: query.scenarioKind,
-      });
+      const scenarios = await scenarioRepository.findMany(
+        org.id,
+        { fiscalYear: query.fiscalYear, kind: query.scenarioKind },
+        prismaBypassRls,
+      );
       const scenario = scenarios[0]; // findMany zaten updatedAt'e göre en yeniden eskiye sıralar.
 
       if (!scenario) {
@@ -78,7 +86,10 @@ export const consolidationService = {
         continue;
       }
 
-      const lines = await budgetLineRepository.findByScenario(scenario.id);
+      const lines = await budgetLineRepository.findByScenario(
+        scenario.id,
+        prismaBypassRls,
+      );
       const localTotalsByCategory = new Map<string, number>();
       for (const line of lines) {
         if (line.month < query.periodStart || line.month > query.periodEnd) continue;

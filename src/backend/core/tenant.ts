@@ -3,6 +3,7 @@ import { readSessionCookie } from "@/backend/modules/auth/read-session-cookie";
 
 import { UnauthorizedError } from "./errors";
 import type { RequestContext } from "./request-context";
+import { TenantContext } from "./tenant-context";
 
 // Diğer dosyalar hâlâ `import type { RequestContext } from "@/backend/core/tenant"`
 // yapıyor (bkz. budget-line.service.ts, forecast.service.ts, ...) — geriye
@@ -34,4 +35,35 @@ export async function getRequestContext(request: Request): Promise<RequestContex
   }
 
   return context;
+}
+
+/**
+ * `getRequestContext` + `TenantContext.run()` sarmalayıcısı. RUTUBET tabi
+ * (`Scenario`/`BudgetLine`/`AuditLog`/`ImportJob`) tabloları sorgulayan
+ * HER route handler bunu kullanmalı — düz `getRequestContext` DEĞİL.
+ *
+ * NEDEN GEREKLİ: `TenantContext.run(context, callback)`, `callback`'i (ve
+ * onun `await` ettiği her şeyi) baştan itibaren doğru tenant bağlamında
+ * çalıştırır — `backend/core/prisma-client.ts`teki Client Extension'ın
+ * `SET LOCAL app.current_tenant_id` çalıştırıp çalıştırmayacağını buradan
+ * öğrenmesi İÇİN ŞART (bkz. `tenant-context.ts`teki `.enterWith()` neden
+ * KULLANILMADIĞINI anlatan not — deneyle doğrulanmış bir gotcha).
+ *
+ * Kullanım (route.ts içinde):
+ * ```ts
+ * export const GET = handleRoute((request) =>
+ *   withTenantContext(request, async (context) => {
+ *     assertPermission(context.role, "...");
+ *     return ok(await someService.doThing(context, ...));
+ *   }),
+ * );
+ * ```
+ */
+export function withTenantContext<T>(
+  request: Request,
+  handler: (context: RequestContext) => Promise<T>,
+): Promise<T> {
+  return getRequestContext(request).then((context) =>
+    TenantContext.run(context, () => handler(context)),
+  );
 }

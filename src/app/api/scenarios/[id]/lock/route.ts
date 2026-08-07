@@ -1,6 +1,6 @@
 import { assertPermission } from "@/backend/core/authorize";
 import { handleRoute, ok } from "@/backend/core/http";
-import { getRequestContext } from "@/backend/core/tenant";
+import { withTenantContext } from "@/backend/core/tenant";
 import { scenarioService } from "@/backend/modules/scenarios/scenario.service";
 
 /**
@@ -9,12 +9,12 @@ import { scenarioService } from "@/backend/modules/scenarios/scenario.service";
  * Sadece scenario:lock izni olan roller (Admin, Bütçe Yöneticisi).
  */
 export const POST = handleRoute(
-  async (request: Request, routeContext: { params: Promise<{ id: string }> }) => {
-    const context = await getRequestContext(request);
-    assertPermission(context.role, "scenario:lock");
+  (request: Request, routeContext: { params: Promise<{ id: string }> }) =>
+    withTenantContext(request, async (context) => {
+      assertPermission(context.role, "scenario:lock");
 
-    const { id } = await routeContext.params;
+      const { id } = await routeContext.params;
 
-    return ok(await scenarioService.setLocked(context.tenantId, id, true));
-  },
+      return ok(await scenarioService.setLocked(context.tenantId, id, true));
+    }),
 );

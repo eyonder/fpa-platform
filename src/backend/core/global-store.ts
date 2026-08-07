@@ -10,9 +10,17 @@
  * session.repository.ts'in FARKLI kopyalarına bakıyordu.
  *
  * Çözüm: gerçekten TEK bir Node.js process'i içinde paylaşılan `globalThis`
- * üzerinde saklamak. Bellek-içi repository'lerin HEPSİ bunu kullanır — bu,
- * gerçek bir veritabanına (Prisma) geçilince zaten anlamsızlaşacak, geçici
- * bir demo-katmanı önlemidir.
+ * üzerinde saklamak.
+ *
+ * GÜNCELLEME (PostgreSQL/Prisma geçişi sonrası): Bellek-içi repository'lerin
+ * (users/sessions/scenarios/budget-lines/audit/imports) TAMAMI artık Prisma
+ * kullanıyor, bu dosyayı KULLANMIYOR — mock veri katmanı olarak görevi
+ * bitti. Ancak `getGlobalStore` yardımcı fonksiyonu HÂLÂ canlı ve gerekli:
+ * aynı Turbopack dual-bundle riski, tek bir `PrismaClient` bağlantı havuzunu
+ * (`backend/core/prisma-client.ts`) ve tek bir `AsyncLocalStorage` örneğini
+ * (`backend/core/tenant-context.ts`) `globalThis` üzerinde gerçek birer
+ * singleton olarak tutmak için de geçerli — bu yüzden dosya SİLİNMEDİ, genel
+ * amaçlı bir "Turbopack-güvenli singleton" yardımcısına dönüştü.
  */
 export function getGlobalStore<T>(key: string, create: () => T): T {
   const globalKey = `__fpa_store_${key}`;

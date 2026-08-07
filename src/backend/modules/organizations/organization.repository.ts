@@ -1,57 +1,44 @@
+import { prisma } from "@/backend/core/prisma-client";
 import type { Organization } from "@/shared/types";
+import type { Tenant } from "@prisma/client";
 
 /**
- * VERİ ERİŞİM KATMANI (Repository).
+ * VERİ ERİŞİM KATMANI (Repository) — Prisma/PostgreSQL.
  *
- * Şu an bellekte sahte veri döner (bkz. scenario.repository.ts'teki not).
+ * ÖNEMLİ: Bu uygulamada `Organization.id`, aynı zamanda o şirketin
+ * `Scenario.tenantId` değeridir — yani her alt şirket kendi tenant'ıdır
+ * (kendi Scenario/BudgetLine kayıtları). Bu yüzden ayrı bir "Organization"
+ * tablosu YOK — `prisma/schema.prisma`'daki `Tenant` modeli bu domain
+ * tipinin karşılığıdır (`parentTenantId` ↔ `parentOrganizationId`).
+ * `Tenant` RLS'e TABİ DEĞİLDİR (holding ağacının ve login'in tenant
+ * bilinmeden ÖNCE gezilebilmesi gerekir).
  *
- * ÖNEMLİ: Burada `Organization.id`, aynı zamanda o şirketin `Scenario.tenantId`
- * değeridir — yani her alt şirket kendi tenant'ıdır (kendi Scenario/BudgetLine
- * kayıtları). Konsolidasyon, holding'in KENDİ isteğiyle bu tenant sınırlarını
- * bilinçli biçimde aşan tek yerdir (bkz. consolidation.service.ts'teki yetki
- * kontrolü). Prisma + RLS'e geçilince bu, holding tenant'ının alt org'ları
- * için tanımlı bir view/policy'ye karşılık gelir.
+ * Konsolidasyon, holding'in KENDİ isteğiyle tenant sınırlarını bilinçli
+ * biçimde aşan tek yerdir — bkz. `consolidation.service.ts`'teki yetki
+ * kontrolü ve `backend/core/prisma-client.ts`'teki `prismaBypassRls`.
  */
 
-const ORGANIZATIONS: Organization[] = [
-  {
-    id: "org-holding",
-    name: "Acme Holding A.Ş.",
-    parentOrganizationId: null,
-    baseCurrency: "TRY",
-  },
-  {
-    id: "org-tr",
-    name: "Acme Türkiye A.Ş.",
-    parentOrganizationId: "org-holding",
-    baseCurrency: "TRY",
-  },
-  {
-    id: "org-de",
-    name: "Acme Deutschland GmbH",
-    parentOrganizationId: "org-holding",
-    baseCurrency: "EUR",
-  },
-  {
-    id: "org-us",
-    name: "Acme USA Inc.",
-    parentOrganizationId: "org-holding",
-    baseCurrency: "USD",
-  },
-];
-
-const store = new Map<string, Organization>(ORGANIZATIONS.map((o) => [o.id, o]));
+function toOrganization(tenant: Tenant): Organization {
+  return {
+    id: tenant.id,
+    name: tenant.name,
+    parentOrganizationId: tenant.parentTenantId,
+    baseCurrency: tenant.baseCurrency,
+  };
+}
 
 export const organizationRepository = {
   async findById(id: string): Promise<Organization | null> {
-    return store.get(id) ?? null;
+    const tenant = await prisma.tenant.findUnique({ where: { id } });
+    return tenant ? toOrganization(tenant) : null;
   },
 
   /** Sadece bir alt kademe (doğrudan çocuklar). */
   async findChildren(parentOrganizationId: string): Promise<Organization[]> {
-    return [...store.values()].filter(
-      (o) => o.parentOrganizationId === parentOrganizationId,
-    );
+    const tenants = await prisma.tenant.findMany({
+      where: { parentTenantId: parentOrganizationId },
+    });
+    return tenants.map(toOrganization);
   },
 
   /** Tüm alt ağaç (çocuklar + torunlar + ...), çok kademeli holdingler için. */
@@ -61,11 +48,11 @@ export const organizationRepository = {
 
     while (queue.length > 0) {
       const currentId = queue.shift()!;
-      const children = [...store.values()].filter(
-        (o) => o.parentOrganizationId === currentId,
-      );
+      const children = await prisma.tenant.findMany({
+        where: { parentTenantId: currentId },
+      });
       for (const child of children) {
-        result.push(child);
+        result.push(toOrganization(child));
         queue.push(child.id);
       }
     }

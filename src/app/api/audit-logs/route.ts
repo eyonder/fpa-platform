@@ -1,6 +1,6 @@
 import { assertPermission } from "@/backend/core/authorize";
 import { handleRoute, ok } from "@/backend/core/http";
-import { getRequestContext } from "@/backend/core/tenant";
+import { withTenantContext } from "@/backend/core/tenant";
 import { listAuditLogsSchema } from "@/backend/modules/audit/audit.schema";
 import { auditService } from "@/backend/modules/audit/audit.service";
 
@@ -13,12 +13,13 @@ import { auditService } from "@/backend/modules/audit/audit.service";
  * Sadece audit:read izni olan roller (Admin, Bütçe Yöneticisi) görebilir —
  * Veri Giriş Uzmanı kendi girdiği veriyi görür ama denetim izini göremez.
  */
-export const GET = handleRoute(async (request: Request) => {
-  const context = await getRequestContext(request);
-  assertPermission(context.role, "audit:read");
+export const GET = handleRoute((request: Request) =>
+  withTenantContext(request, async (context) => {
+    assertPermission(context.role, "audit:read");
 
-  const params = Object.fromEntries(new URL(request.url).searchParams);
-  const query = listAuditLogsSchema.parse(params);
+    const params = Object.fromEntries(new URL(request.url).searchParams);
+    const query = listAuditLogsSchema.parse(params);
 
-  return ok(await auditService.list(context.tenantId, query));
-});
+    return ok(await auditService.list(context.tenantId, query));
+  }),
+);

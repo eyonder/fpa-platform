@@ -124,6 +124,14 @@ export const authService = {
     ]);
     if (!user || !membership) return null;
 
+    // NOT: Burada BİLEREK `TenantContext.enterWith(...)` çağrılMIYOR. Bu
+    // fonksiyon session/user/membership'i okumak için zaten `await` yapmış
+    // durumda — deneyle doğrulandığı üzere (`tenant-context.ts`teki yorum)
+    // bir `await`den SONRA çağrılan `enterWith`, bu fonksiyonu ÇAĞIRANA asla
+    // yayılmıyor. Tenant bağlamı bunun yerine `tenant.ts`teki
+    // `withTenantContext()` tarafından, dönen context `TenantContext.run()`a
+    // verilerek kurulur — route handler'lar BUNU kullanmalı, bu fonksiyonu
+    // doğrudan değil (bkz. o dosyadaki yorum).
     return {
       tenantId: session.tenantId,
       userId: user.id,

@@ -1,0 +1,283 @@
+// FP&A Platform — Prisma şeması.
+//
+// Bu şema `fpa-postgres-prisma-rls-guide.md`'deki taslaktan UYARLANMIŞTIR,
+// birebir kopyalanmamıştır: gerçek uygulamanın `src/shared/types/*.ts`
+// altındaki tipleriyle birebir eşleşecek şekilde tasarlanmıştır (örn. bu
+// uygulamada bir Organization ZATEN bir tenant'tır — ayrı bir OrganizationNode
+// yoktur; BudgetLine ay-başına-satır modelindedir, m1..m12 geniş kolon
+// modelinde DEĞİL; User değil Membership tenant taşır — bir kullanıcının
+// birden çok tenant'ta üyeliği olabilir).
+//
+// RLS (satır düzeyinde güvenlik) sadece GERÇEKTEN tenant'a bölünmüş
+// tablolarda aktiftir: Scenario, BudgetLine, AuditLog, ImportJob (bkz.
+// prisma/migrations/*_enable_rls/migration.sql). User/Membership/Session/
+// PasswordResetToken (kimlik çözümleme, tenant bilinmeden ÖNCE sorgulanır)
+// ve Tenant/FxRate/BudgetCategory (küresel referans verisi) BİLEREK RLS
+// dışında tutulmuştur.
+
+// Prisma 7: bağlantı URL'i artık burada değil, `prisma.config.ts` +
+// runtime'da `backend/core/prisma-client.ts` içindeki driver adapter
+// (`@prisma/adapter-pg`) üzerinden geçirilir (bkz. https://pris.ly/d/config-datasource).
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ----------------------------------------------------
+// 1. Tenant (= Organization). Holding ağacı için öz-ilişki.
+// ----------------------------------------------------
+
+model Tenant {
+  id             String  @id
+  name           String
+  parentTenantId String?
+  baseCurrency   String
+
+  parent   Tenant?  @relation("TenantHierarchy", fields: [parentTenantId], references: [id])
+  children Tenant[] @relation("TenantHierarchy")
+
+  memberships Membership[]
+  scenarios   Scenario[]
+  budgetLines BudgetLine[]
+  auditLogs   AuditLog[]
+  importJobs  ImportJob[]
+  sessions    Session[]
+
+  @@index([parentTenantId])
+}
+
+// ----------------------------------------------------
+// 2. Kullanıcılar, çoklu-tenant üyelik (RBAC rolü üyelik başınadır)
+// ----------------------------------------------------
+
+enum Role {
+  ADMIN
+  BUDGET_MANAGER
+  DATA_ENTRY
+}
+
+model User {
+  id           String @id
+  name         String
+  email        String @unique
+  passwordHash String
+
+  memberships         Membership[]
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+model Membership {
+  // Yalnızca dahili sıralama içindir (bkz. findMembershipsByUser) — domain
+  // tipinde (Membership) YOKTUR, API yanıtına asla sızmaz. Seed script'i
+  // bugünkü sabit dizi sırasını birebir korumalı: authService.login()
+  // "ilk üyelik = birincil tenant" mantığını hâlâ kullanıyor.
+  id Int @default(autoincrement())
+
+  userId   String
+  tenantId String
+  role     Role
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+}
+
+// ----------------------------------------------------
+// 3. Oturum & şifre sıfırlama (RLS YOK — tenant bilinmeden önce sorgulanır)
+// ----------------------------------------------------
+
+model Session {
+  id        String   @id
+  userId    String
+  tenantId  String
+  createdAt DateTime
+  expiresAt DateTime
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  token     String   @id
+  userId    String
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ----------------------------------------------------
+// 4. Senaryolar (RLS'li)
+// ----------------------------------------------------
+
+enum ScenarioKind {
+  BUDGET
+  ACTUAL
+  FORECAST
+}
+
+model Scenario {
+  id           String       @id
+  tenantId     String
+  name         String
+  kind         ScenarioKind
+  fiscalYear   Int
+  isLocked     Boolean      @default(false)
+  baseCurrency String
+  updatedAt    DateTime     @updatedAt
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  budgetLines BudgetLine[]
+  auditLogs   AuditLog[]
+  importJobs  ImportJob[]
+
+  @@index([tenantId, name])
+}
+
+// ----------------------------------------------------
+// 5. Bütçe kategorileri (küresel referans — RLS YOK, bugünkü davranışla aynı)
+// ----------------------------------------------------
+
+enum BudgetCategoryType {
+  INCOME
+  EXPENSE
+}
+
+model BudgetCategory {
+  id        String             @id
+  name      String
+  type      BudgetCategoryType
+  sortOrder Int
+
+  budgetLines BudgetLine[]
+  auditLogs   AuditLog[]
+}
+
+// ----------------------------------------------------
+// 6. Bütçe satırları (RLS'li) — ay-başına-satır, m1..m12 geniş kolon DEĞİL
+// ----------------------------------------------------
+
+model BudgetLine {
+  scenarioId String
+  categoryId String
+  month      Int
+
+  // Denormalize: domain tipinde (BudgetLine) yok, sadece RLS + index için.
+  // Repository sınırında dışa asla sızdırılmaz.
+  tenantId String
+
+  // Kuruş (integer minor unit) — shared/lib/money.ts'teki
+  // toMinorUnits/fromMinorUnits ile repository sınırında çevrilir.
+  amountMinor BigInt
+
+  updatedAt DateTime @updatedAt
+
+  scenario Scenario       @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  category BudgetCategory @relation(fields: [categoryId], references: [id])
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([scenarioId, categoryId, month])
+  @@index([tenantId])
+}
+
+// ----------------------------------------------------
+// 7. Denetim izi (RLS'li — sadece SELECT+INSERT, UPDATE/DELETE politikası YOK)
+// ----------------------------------------------------
+
+enum AuditAction {
+  CREATE
+  UPDATE
+}
+
+enum AuditSource {
+  MANUAL_EDIT
+  FORECAST
+  IMPORT
+}
+
+model AuditLog {
+  // audit.service.ts crypto.randomUUID() ile üretip geçirir — @default YOK.
+  id       String @id
+  tenantId String
+  userId   String
+  userName String
+
+  action     AuditAction
+  entityType String // şimdilik hep "BudgetLine"
+  scenarioId String
+  categoryId String
+  month      Int
+  fieldName  String // şimdilik hep "amount"
+
+  // Kuruş (integer minor unit) — BudgetLine.amountMinor ile aynı disiplin.
+  oldValue BigInt
+  newValue BigInt
+
+  occurredAt DateTime
+  source     AuditSource
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scenario Scenario       @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  category BudgetCategory @relation(fields: [categoryId], references: [id])
+
+  @@index([tenantId, scenarioId])
+}
+
+// ----------------------------------------------------
+// 8. İçe aktarma sihirbazı (RLS'li)
+// ----------------------------------------------------
+
+enum ImportStatus {
+  PENDING_REVIEW
+  COMMITTED
+}
+
+model ImportJob {
+  id         String       @id
+  tenantId   String
+  scenarioId String
+  fileName   String
+  status     ImportStatus @default(PENDING_REVIEW)
+
+  detectedColumns  Json
+  suggestedMapping Json
+  appliedMapping   Json
+  rows             Json
+  issues           Json
+
+  // {headers, rows} — commit sonrası Prisma.JsonNull ile temizlenir
+  // (eski deleteRawGrid davranışının karşılığı).
+  rawGrid Json?
+
+  createdAt         DateTime
+  createdByUserId   String
+  createdByUserName String
+  committedAt       DateTime?
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scenario Scenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+// ----------------------------------------------------
+// 9. Döviz kurları (küresel referans — RLS YOK)
+// ----------------------------------------------------
+
+model FxRate {
+  date  DateTime @db.Date
+  base  String
+  quote String
+  rate  Float
+
+  @@id([date, base, quote])
+}

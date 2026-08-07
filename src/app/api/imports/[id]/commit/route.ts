@@ -1,6 +1,6 @@
 import { assertPermission } from "@/backend/core/authorize";
 import { handleRoute, ok } from "@/backend/core/http";
-import { getRequestContext } from "@/backend/core/tenant";
+import { withTenantContext } from "@/backend/core/tenant";
 import { importService } from "@/backend/modules/imports/import.service";
 
 /**
@@ -9,12 +9,12 @@ import { importService } from "@/backend/modules/imports/import.service";
  * kontrolü + audit kaydı budgetLineService.bulkUpsert üzerinden gelir).
  */
 export const POST = handleRoute(
-  async (request: Request, routeContext: { params: Promise<{ id: string }> }) => {
-    const context = await getRequestContext(request);
-    assertPermission(context.role, "import:run");
+  (request: Request, routeContext: { params: Promise<{ id: string }> }) =>
+    withTenantContext(request, async (context) => {
+      assertPermission(context.role, "import:run");
 
-    const { id } = await routeContext.params;
+      const { id } = await routeContext.params;
 
-    return ok(await importService.commit(context, id));
-  },
+      return ok(await importService.commit(context, id));
+    }),
 );

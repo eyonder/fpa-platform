@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: fpa-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fpa
+      POSTGRES_PASSWORD: fpa
+      POSTGRES_DB: fpa
+    ports:
+      - "5432:5432"
+    volumes:
+      - fpa-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  fpa-postgres-data:

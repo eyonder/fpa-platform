@@ -11,9 +11,19 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run lint && npm run format:check"
+    "check": "npm run typecheck && npm run lint && npm run format:check",
+    "postinstall": "prisma generate",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:create": "prisma migrate dev --create-only",
+    "db:deploy": "prisma migrate deploy",
+    "db:seed": "prisma db seed",
+    "db:studio": "prisma studio",
+    "db:reset": "prisma migrate reset"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
     "ag-grid-community": "^36.1.0",
     "ag-grid-react": "^36.1.0",
     "bcryptjs": "^3.0.3",
@@ -29,12 +39,15 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv": "^17.4.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.9.6",
     "prettier-plugin-tailwindcss": "^0.8.1",
+    "prisma": "^7.9.1",
     "tailwindcss": "^4",
+    "tsx": "^4.23.11",
     "typescript": "^5"
   }
 }
