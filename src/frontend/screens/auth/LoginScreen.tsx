@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
-import { AydinlatmaMetni } from "@/frontend/components/AydinlatmaMetni";
 import { apiClient, ApiError } from "@/frontend/lib/api-client";
 import type { LoginResponse } from "@/shared/types";
 
@@ -164,8 +163,6 @@ export function LoginScreen() {
                   {submitting ? "Giriş yapılıyor…" : "Giriş Yap"}
                 </button>
               </form>
-
-              <AydinlatmaMetni />
 
               <div className="mt-4 rounded-md bg-paper px-3 py-2 text-xs text-muted">
                 <p className="font-medium text-ink">

@@ -59,7 +59,7 @@ görebilirsiniz (bkz. "Modüller"deki RBAC satırı).
 
 | Ekran / uç nokta                              | Ne yapar                                                                        |
 | ---------------------------------------------- | -------------------------------------------------------------------------------- |
-| `/giris`, `/sifremi-unuttum`, `/sifre-sifirla` | E-posta+şifre girişi, KVKK aydınlatma metni, şifre sıfırlama akışı — bkz. aşağıda |
+| `/giris`, `/sifremi-unuttum`, `/sifre-sifirla` | E-posta+şifre girişi, şifre sıfırlama akışı — bkz. aşağıda                       |
 | `/senaryolar`, `GET,POST /api/scenarios`       | Bütçe/Gerçekleşen/Tahmin senaryoları; kilitleme = onay adımı                    |
 | `/butce-girisi`, `GET,POST /api/budget-lines`  | AG Grid tabanlı bütçe tablosu: hücre düzenleme, TSV yapıştırma, satır/sütun toplamı |
 | `GET /api/variance`                            | Bütçe-gerçekleşen sapma (varyans) analizi, tutar + yüzde                        |
@@ -123,7 +123,7 @@ src/
 │
 ├── frontend/                         KULLANICI ARAYÜZÜ
 │   ├── screens/                      dashboard, scenarios, budget-entry, import, audit-log, auth/
-│   ├── components/                   AppShell, LogoutButton, AydinlatmaMetni, ui/, budget-grid/
+│   ├── components/                   AppShell, LogoutButton, ui/, budget-grid/
 │   ├── hooks/                        useScenarios, useBudgetLines, useAuditLogs
 │   ├── lib/                          api-client, clipboard, format, role-labels
 │   └── styles/globals.css            Tailwind teması (@theme jetonları)
