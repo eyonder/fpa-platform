@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 
+import { sendEmail } from "@/backend/core/email";
 import { AppError } from "@/backend/core/errors";
 import { logger } from "@/backend/core/logger";
 import {
@@ -21,6 +22,7 @@ import type {
   LoginInput,
   ResetPasswordInput,
 } from "./auth.schema";
+import { mfaService } from "./mfa.service";
 import { passwordResetRepository } from "./password-reset.repository";
 import { sessionRepository } from "./session.repository";
 
@@ -42,8 +44,58 @@ export interface LoginResult {
   maxAgeSeconds: number;
 }
 
+/**
+ * `login()`'in dönebileceği iki durum. `MFA_REQUIRED` bir hata DEĞİLDİR —
+ * parola doğru, sadece oturum henüz kurulmadı (bkz. `verifyMfaAndCreateSession`).
+ */
+export type LoginOutcome = ({ status: "OK" } & LoginResult) | MfaRequiredOutcome;
+
+export interface MfaRequiredOutcome {
+  status: "MFA_REQUIRED";
+  challengeId: string;
+}
+
+/** `login()` ve `verifyMfaAndCreateSession()`in PAYLAŞTIĞI son adım: birincil
+ * üyeliği bul, oturumu kur. MFA, bu adımı DEĞİŞTİRMEZ — sadece öncesine bir
+ * dallanma ekler (bkz. login() içindeki yorum). */
+async function createSessionForUser(
+  userId: string,
+  userName: string,
+  userEmail: string,
+  rememberMe: boolean,
+): Promise<LoginResult> {
+  const memberships = await userRepository.findMembershipsByUser(userId);
+  const primaryMembership = memberships[0];
+  if (!primaryMembership) {
+    throw new AppError(
+      "NO_MEMBERSHIP",
+      "Bu kullanıcının hiçbir kiracıda üyeliği yok.",
+      403,
+    );
+  }
+
+  const ttlMs = rememberMe ? SESSION_TTL_REMEMBER_MS : SESSION_TTL_MS;
+  const session = await sessionRepository.create(
+    userId,
+    primaryMembership.tenantId,
+    ttlMs,
+  );
+
+  return {
+    user: {
+      id: userId,
+      name: userName,
+      email: userEmail,
+      tenantId: primaryMembership.tenantId,
+      role: primaryMembership.role,
+    },
+    sessionId: session.id,
+    maxAgeSeconds: Math.floor(ttlMs / 1000),
+  };
+}
+
 export const authService = {
-  async login(input: LoginInput): Promise<LoginResult> {
+  async login(input: LoginInput): Promise<LoginOutcome> {
     const rateLimitKey = `login:${input.email.toLowerCase()}`;
     assertNotRateLimited(rateLimitKey);
 
@@ -59,46 +111,39 @@ export const authService = {
       throw new AppError("INVALID_CREDENTIALS", "E-posta veya şifre hatalı.", 401);
     }
 
-    // ============================================================
-    // MFA BURAYA EKLENECEK.
-    // Parola doğrulandı ama oturum HENÜZ kurulmadı. İleride kullanıcının
-    // MFA'sı aktifse, burada `sessionRepository.create(...)` çağrılmadan
-    // önce bir doğrulama kodu üretilip { status: "MFA_REQUIRED", challengeId }
-    // dönülür; asıl oturum sadece o kod doğrulandıktan SONRA (ikinci bir
-    // servis fonksiyonunda, ör. `verifyMfaCode`) kurulur. Yani MFA, bu
-    // fonksiyonun GÖVDESİNİ değiştirmez — tam bu noktada bir dallanma ekler.
-    // ============================================================
-
     recordSuccess(rateLimitKey);
 
-    const memberships = await userRepository.findMembershipsByUser(credentials.id);
-    const primaryMembership = memberships[0];
-    if (!primaryMembership) {
-      throw new AppError(
-        "NO_MEMBERSHIP",
-        "Bu kullanıcının hiçbir kiracıda üyeliği yok.",
-        403,
-      );
+    // Parola doğrulandı ama oturum HENÜZ kurulmadı. Kullanıcının MFA'sı
+    // aktifse oturum kurmak yerine bir doğrulama kodu bekleyen bir challenge
+    // üretilir; asıl oturum sadece o kod `verifyMfaAndCreateSession` ile
+    // doğrulandıktan SONRA kurulur.
+    const mfaStatus = await mfaService.getStatus(credentials.id);
+    if (mfaStatus.enabled) {
+      const challengeId = await mfaService.createChallengeForUser(credentials.id);
+      return { status: "MFA_REQUIRED", challengeId };
     }
 
-    const ttlMs = input.rememberMe ? SESSION_TTL_REMEMBER_MS : SESSION_TTL_MS;
-    const session = await sessionRepository.create(
+    const result = await createSessionForUser(
       credentials.id,
-      primaryMembership.tenantId,
-      ttlMs,
+      credentials.name,
+      credentials.email,
+      input.rememberMe,
     );
+    return { status: "OK", ...result };
+  },
 
-    return {
-      user: {
-        id: credentials.id,
-        name: credentials.name,
-        email: credentials.email,
-        tenantId: primaryMembership.tenantId,
-        role: primaryMembership.role,
-      },
-      sessionId: session.id,
-      maxAgeSeconds: Math.floor(ttlMs / 1000),
-    };
+  /** MFA kodu (TOTP ya da yedek kod) doğrulanırsa oturumu kurar. */
+  async verifyMfaAndCreateSession(
+    challengeId: string,
+    code: string,
+    rememberMe: boolean,
+  ): Promise<LoginResult> {
+    const userId = await mfaService.verifyChallenge(challengeId, code);
+    const user = await userRepository.findById(userId);
+    if (!user) {
+      throw new AppError("INVALID_CREDENTIALS", "Kullanıcı bulunamadı.", 401);
+    }
+    return createSessionForUser(user.id, user.name, user.email, rememberMe);
   },
 
   async logout(sessionId: string | undefined): Promise<void> {
@@ -140,6 +185,15 @@ export const authService = {
     };
   },
 
+  /** MFA devre dışı bırakma gibi hassas işlemler öncesi yeniden-kimlik-doğrulama içindir. */
+  async verifyPassword(userId: string, password: string): Promise<boolean> {
+    const user = await userRepository.findById(userId);
+    if (!user) return false;
+    const credentials = await userRepository.findCredentialsByEmail(user.email);
+    if (!credentials) return false;
+    return bcrypt.compare(password, credentials.passwordHash);
+  },
+
   async requestPasswordReset(input: ForgotPasswordInput): Promise<void> {
     const credentials = await userRepository.findCredentialsByEmail(input.email);
     // Kullanıcı yoksa bile SESSİZCE başarı dön — bu uç, hangi e-postaların
@@ -152,15 +206,23 @@ export const authService = {
       credentials.id,
       PASSWORD_RESET_TTL_MS,
     );
+    const resetUrl = `/sifre-sifirla?token=${resetToken.token}`;
 
-    // Gerçek ortamda burada bir e-posta servisi (SES/SendGrid/…) çağrılır.
-    // Bu demo'da e-posta altyapısı yok; bağlantıyı sunucu logunda görünür
-    // kılıyoruz ki uçtan uca akış (link olmadan da) test edilebilsin.
+    // Sunucu logunda HER ZAMAN görünür (dev'de linke buradan ulaşılır,
+    // SendGrid yapılandırılmışken de bir denetim izi olarak kalır).
     logger.info("Şifre sıfırlama bağlantısı üretildi", {
       userId: credentials.id,
       email: credentials.email,
-      resetUrl: `/sifre-sifirla?token=${resetToken.token}`,
+      resetUrl,
       expiresInMinutes: PASSWORD_RESET_TTL_MS / 60000,
+    });
+
+    // Gerçek gönderim — backend/core/email.ts SENDGRID_API_KEY yoksa
+    // sessizce no-op'a döner (yerel geliştirme SendGrid GEREKTİRMEZ).
+    await sendEmail({
+      to: credentials.email,
+      subject: "Şifre sıfırlama talebi",
+      html: `<p>Merhaba ${credentials.name},</p><p>Şifrenizi sıfırlamak için <a href="${resetUrl}">bu bağlantıya</a> tıklayın. Bağlantı ${PASSWORD_RESET_TTL_MS / 60000} dakika içinde geçersiz olur.</p><p>Bu isteği siz yapmadıysanız bu e-postayı yok sayabilirsiniz.</p>`,
     });
   },
 

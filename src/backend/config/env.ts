@@ -19,6 +19,18 @@ const schema = z.object({
   // (RLS'e tabi) kullanmalı.
   DATABASE_URL_BYPASS_RLS: z.string().url(),
   REDIS_URL: z.string().url().optional(),
+
+  // TOTP MFA sırlarını (secret) DB'de düz metin tutmamak için — bkz.
+  // backend/core/crypto.ts. 32 byte, base64. Kaybedilir/değiştirilirse
+  // ENROLLI kullanıcıların şifreli sırları çözülemez hâle gelir (yeniden
+  // enroll gerekir) — üretimde bir secret manager'da saklanmalı.
+  MFA_ENCRYPTION_KEY: z.string().min(32),
+
+  // İkisi de opsiyonel: sadece biri (ya da hiçbiri) verilirse gerçek e-posta
+  // gönderimi devre dışı kalır ve backend/core/email.ts sessizce
+  // logger.info fallback'ine döner (yerel geliştirmede SendGrid şart değil).
+  SENDGRID_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().email().optional(),
 });
 
 const parsed = schema.safeParse(process.env);

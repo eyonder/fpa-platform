@@ -20,3 +20,25 @@ export const resetPasswordSchema = z.object({
 });
 
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
+
+export const mfaVerifySchema = z.object({
+  challengeId: z.string().min(1, "challengeId zorunludur."),
+  // TOTP (6 hane) veya yedek kod ("XXXXX-XXXXX") — servis katmanı ikisini de
+  // dener, burada sadece boş olmadığı doğrulanır.
+  code: z.string().min(1, "Kod zorunludur."),
+  rememberMe: z.boolean().optional().default(false),
+});
+
+export type MfaVerifyInput = z.infer<typeof mfaVerifySchema>;
+
+export const mfaEnrollConfirmSchema = z.object({
+  code: z.string().min(1, "Kod zorunludur."),
+});
+
+export type MfaEnrollConfirmInput = z.infer<typeof mfaEnrollConfirmSchema>;
+
+export const mfaDisableSchema = z.object({
+  password: z.string().min(1, "Şifre zorunludur."),
+});
+
+export type MfaDisableInput = z.infer<typeof mfaDisableSchema>;

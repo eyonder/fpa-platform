@@ -11,6 +11,7 @@ const NAV = [
   { href: "/butce-girisi", label: "Bütçe Girişi" },
   { href: "/ice-aktarma", label: "İçe Aktarma" },
   { href: "/denetim-kaydi", label: "Denetim Kaydı" },
+  { href: "/hesap", label: "Hesap" },
 ];
 
 interface AppShellUser {

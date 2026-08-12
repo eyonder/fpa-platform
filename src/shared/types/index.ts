@@ -1,6 +1,6 @@
 export type { ApiFailure, ApiResponse, ApiSuccess } from "./api";
 export type { AuditAction, AuditLogEntry, AuditSource } from "./audit";
-export type { AuthenticatedUser } from "./auth";
+export type { AuthenticatedUser, LoginResponse } from "./auth";
 export type {
   BudgetCategory,
   BudgetCategoryType,

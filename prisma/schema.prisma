@@ -65,9 +65,45 @@ model User {
   email        String @unique
   passwordHash String
 
+  // TOTP MFA — bkz. backend/modules/auth/mfa.service.ts. Sır (secret) ASLA
+  // düz metin saklanmaz, backend/core/crypto.ts ile şifrelenir. mfaEnabled
+  // false iken bir mfaSecretCiphertext dolu olabilir (yarım kalmış/henüz
+  // onaylanmamış kayıt) — login akışı SADECE mfaEnabled'a bakar, bu yüzden
+  // güvenlidir.
+  mfaSecretCiphertext String?
+  mfaEnabled          Boolean @default(false)
+
   memberships         Membership[]
   sessions            Session[]
   passwordResetTokens PasswordResetToken[]
+  mfaBackupCodes      MfaBackupCode[]
+  mfaChallenges       MfaChallenge[]
+}
+
+model MfaBackupCode {
+  id        String    @id
+  userId    String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/**
+ * Şifre doğrulandı, oturum HENÜZ kurulmadı — bkz. auth.service.ts login().
+ */
+model MfaChallenge {
+  id        String   @id
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Membership {
