@@ -29,6 +29,21 @@ export type {
   ImportStatus,
   ImportTargetField,
 } from "./import";
+export type {
+  AllocationKey,
+  AllocationKeyMember,
+  CostCenter,
+  CreateCostCenterInput,
+  UpdateCostCenterInput,
+  UpsertAllocationKeyInput,
+} from "./cost-center";
+export type {
+  AllocationReportRow,
+  CreateExpenseEntryInput,
+  ExpenseEntry,
+  ExpenseEntryStatus,
+  UpdateExpenseEntryInput,
+} from "./expense-entry";
 export type { Organization } from "./organization";
 export type {
   CompensationInputMode,

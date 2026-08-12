@@ -29,7 +29,13 @@ export type Permission =
   /** Personel/maaş verisini görüntüleme (bordro önizleme dahil). */
   | "payroll:read"
   /** Personel ekleme/düzenleme, ücret kaydı girme, bordroyu bütçeye yazma. */
-  | "payroll:write";
+  | "payroll:write"
+  /** Gider merkezi / tahsis anahtarı oluşturma-düzenleme. */
+  | "cost-center:write"
+  /** Taslak gider kaydı oluşturma/düzenleme, onaya gönderme. */
+  | "expense-entry:write"
+  /** Onaya gönderilmiş gider kaydını onaylama/reddetme, bütçeye yazma. */
+  | "expense-entry:approve";
 
 const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   ADMIN: [
@@ -42,6 +48,9 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "audit:read",
     "payroll:read",
     "payroll:write",
+    "cost-center:write",
+    "expense-entry:write",
+    "expense-entry:approve",
   ],
   // ÖNEMLİ: payroll:read/payroll:write BİLEREK burada YOK. Maaş verisi
   // gizliliği (bkz. Employee/EmployeeCompensation RLS + şifreleme notu,
@@ -55,11 +64,16 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "consolidation:run",
     "import:run",
     "audit:read",
+    "cost-center:write",
+    "expense-entry:write",
+    "expense-entry:approve",
   ],
   // Veri Giriş Uzmanı: sadece veri girer (elle ya da dosyayla). Senaryo
   // yönetemez, kilit açamaz/kapatamaz, forecast/konsolidasyon çalıştıramaz,
   // denetim kaydını göremez (bu, Bütçe Yöneticisi/Admin'in gözetim aracıdır).
-  DATA_ENTRY: ["budget-line:write", "import:run"],
+  // expense-entry:approve BİLEREK YOK — kendi gönderdiği gideri kendisi
+  // onaylayamasın diye (bkz. expense-entry.service.ts'teki onay akışı notu).
+  DATA_ENTRY: ["budget-line:write", "import:run", "expense-entry:write"],
 };
 
 export function hasPermission(role: Role, permission: Permission): boolean {
@@ -76,6 +90,9 @@ const PERMISSION_LABELS: Record<Permission, string> = {
   "audit:read": "denetim kaydını görüntüleme",
   "payroll:read": "personel/maaş verisini görüntüleme",
   "payroll:write": "personel/bordro işlemleri",
+  "cost-center:write": "gider merkezi/tahsis anahtarı yönetimi",
+  "expense-entry:write": "gider kaydı girişi",
+  "expense-entry:approve": "gider kaydı onaylama",
 };
 
 const ROLE_LABELS: Record<Role, string> = {

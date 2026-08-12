@@ -47,6 +47,10 @@ model Tenant {
   sessions              Session[]
   employees             Employee[]
   employeeCompensations EmployeeCompensation[]
+  costCenters           CostCenter[]
+  allocationKeys        AllocationKey[]
+  allocationKeyMembers  AllocationKeyMember[]
+  expenseEntries        ExpenseEntry[]
 
   @@index([parentTenantId])
 }
@@ -173,10 +177,11 @@ model Scenario {
   baseCurrency String
   updatedAt    DateTime     @updatedAt
 
-  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  budgetLines BudgetLine[]
-  auditLogs   AuditLog[]
-  importJobs  ImportJob[]
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  budgetLines    BudgetLine[]
+  auditLogs      AuditLog[]
+  importJobs     ImportJob[]
+  expenseEntries ExpenseEntry[]
 
   @@index([tenantId, name])
 }
@@ -196,8 +201,9 @@ model BudgetCategory {
   type      BudgetCategoryType
   sortOrder Int
 
-  budgetLines BudgetLine[]
-  auditLogs   AuditLog[]
+  budgetLines    BudgetLine[]
+  auditLogs      AuditLog[]
+  expenseEntries ExpenseEntry[]
 }
 
 // ----------------------------------------------------
@@ -241,6 +247,7 @@ enum AuditSource {
   FORECAST
   IMPORT
   PAYROLL
+  EXPENSE
 }
 
 model AuditLog {
@@ -442,4 +449,122 @@ model PayrollTaxConfig {
 
   standardMonthlyWorkingHours Int     @default(225)
   overtimePremiumMultiplier   Decimal @default(1.5) @db.Decimal(4, 2)
+}
+
+// ----------------------------------------------------
+// 11. Gider Merkezleri / Onay Akışı (Faz 2.2)
+// ----------------------------------------------------
+// CostCenter/AllocationKey/AllocationKeyMember/ExpenseEntry RLS'lidir
+// (Scenario/BudgetLine/AuditLog/ImportJob/Employee setine katılır) —
+// tenant'a özel veridir. "Gider türü" için AYRI bir model YOK — mevcut
+// BudgetCategory (type: EXPENSE) doğrudan kullanılır, çünkü ExpenseEntry
+// sonunda budgetLineService.bulkUpsert üzerinden zaten BudgetCategory
+// eksenli BudgetLine'a yazılır (bkz. expense-entry.service.ts).
+//
+// AllocationKey: bir KAYNAK gider merkezinin (ör. paylaşılan BT hizmeti)
+// maliyetini üye gider merkezlerine SABİT % ağırlıkla dağıtır. Bu dağılım
+// SADECE raporlama/iç yükleme (cross-charge) amaçlıdır — BudgetLine'da
+// gider merkezi ekseni YOKTUR, o yüzden dağılım booked kategori/ay
+// toplamını DEĞİŞTİRMEZ (bkz. expense-allocation.ts).
+
+model CostCenter {
+  id                 String  @id
+  tenantId           String
+  code               String
+  name               String
+  parentCostCenterId String?
+
+  tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parent   CostCenter?  @relation("CostCenterHierarchy", fields: [parentCostCenterId], references: [id])
+  children CostCenter[] @relation("CostCenterHierarchy")
+
+  allocationKey     AllocationKey?        @relation("AllocationKeySource")
+  allocatedAsMember AllocationKeyMember[]
+  expenseEntries    ExpenseEntry[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, parentCostCenterId])
+}
+
+// Bir kaynak gider merkezinin maliyetini üye gider merkezlerine sabit %
+// ağırlıkla dağıtan anahtar. EN FAZLA bir anahtar/kaynak gider merkezi
+// (bkz. @@unique). ExpenseEntry bu anahtara DOĞRUDAN referans VERMEZ —
+// rapor, entry.costCenterId üzerinden anahtarı arar (expense-allocation.ts).
+model AllocationKey {
+  id                 String @id
+  tenantId           String
+  name               String
+  // `@unique` (küresel, tenantId'ye bağlı DEĞİL): id'ler zaten UUID olduğu
+  // için pratikte fark etmez, ama Prisma bire-bir ilişkinin (CostCenter.allocationKey)
+  // tanımlı tarafında salt bir `@unique` alan İSTER (composite unique yetmez).
+  sourceCostCenterId String @unique
+
+  tenant           Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sourceCostCenter CostCenter            @relation("AllocationKeySource", fields: [sourceCostCenterId], references: [id], onDelete: Cascade)
+  members          AllocationKeyMember[]
+}
+
+model AllocationKeyMember {
+  id              String  @id
+  tenantId        String
+  allocationKeyId String
+  costCenterId    String
+  // Yüzde ağırlık (0-100) — bir anahtarın üyeleri toplamda 100 etmeli
+  // (service katmanında doğrulanır, DB constraint YOK).
+  weightPercent   Decimal @db.Decimal(5, 2)
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  allocationKey AllocationKey @relation(fields: [allocationKeyId], references: [id], onDelete: Cascade)
+  costCenter    CostCenter    @relation(fields: [costCenterId], references: [id])
+
+  @@unique([allocationKeyId, costCenterId])
+  @@index([tenantId])
+}
+
+enum ExpenseEntryStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  COMMITTED
+}
+
+model ExpenseEntry {
+  id           String @id
+  tenantId     String
+  scenarioId   String
+  costCenterId String
+  categoryId   String
+  month        Int
+
+  // Kuruş (integer minor unit) — BudgetLine.amountMinor ile aynı disiplin.
+  amountMinor BigInt
+
+  status ExpenseEntryStatus @default(DRAFT)
+
+  submittedByUserId   String?
+  submittedByUserName String?
+  submittedAt         DateTime?
+
+  decidedByUserId   String?
+  decidedByUserName String?
+  decidedAt         DateTime?
+  rejectionReason   String?
+
+  // commitApproved'da APPROVED -> COMMITTED geçişiyle birlikte set edilir
+  // (bkz. expense-entry.service.ts) — budgetLineService.bulkUpsert'in
+  // ürettiği AuditLog'dan AYRI, bu entry'nin KENDİ durumunu izler.
+  committedAt DateTime?
+
+  createdAt DateTime
+  updatedAt DateTime @updatedAt
+
+  tenant     Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scenario   Scenario       @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  costCenter CostCenter     @relation(fields: [costCenterId], references: [id])
+  category   BudgetCategory @relation(fields: [categoryId], references: [id])
+
+  @@unique([tenantId, scenarioId, costCenterId, categoryId, month])
+  @@index([tenantId, scenarioId, status])
+  @@index([tenantId, costCenterId])
 }
