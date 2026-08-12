@@ -67,6 +67,7 @@ görebilirsiniz (bkz. "Modüller"deki RBAC satırı).
 | `GET /api/consolidation`                       | Holding altındaki şirketleri kur çevrimiyle (çapraz kur destekli) tek para birimine toplar |
 | `/ice-aktarma`, `POST /api/imports/*`          | Mizan/Muavin CSV veya Excel içe aktarma: kolon eşleştirme, önizleme, onay        |
 | `/denetim-kaydi`, `GET /api/audit-logs`        | Her bütçe hücresi değişikliğinin eski/yeni değeri + kim/ne zaman/nereden yaptığı |
+| `/hesap`, `GET,POST /api/account/mfa*`         | TOTP MFA enroll/disable (QR + yedek kodlar) — bkz. aşağıdaki paragraf            |
 | RBAC (`backend/core/authorize.ts`)             | Admin / Bütçe Yöneticisi / Veri Giriş Uzmanı — tek bir izin tablosu              |
 
 Giriş, httpOnly bir oturum çerezi (`fpa_session`) set eder; kimlik artık bu çerezden
@@ -75,9 +76,16 @@ basması artık MÜMKÜN DEĞİL (eskiden, gerçek login gelmeden önce, demo bi
 ActorSwitcher header'la kimlik taşıyordu — bkz. git geçmişi). `src/proxy.ts`
 (Next.js 16'da "middleware" adı "proxy" oldu) oturumsuz istekleri `/giris`e
 yönlendirir; asıl yetkilendirme her API isteğinde `getRequestContext` ve her sayfa
-render'ında `(app)/layout.tsx` tarafından ayrıca doğrulanır. MFA eklemek için bkz.
-`auth.service.ts`'teki `login` fonksiyonunun içindeki yorum — parola doğrulaması ile
-oturum kurma arasına net bir genişletme noktası bırakıldı.
+render'ında `(app)/layout.tsx` tarafından ayrıca doğrulanır.
+
+**TOTP MFA** (`backend/modules/auth/mfa.service.ts`) `/hesap`'tan etkinleştirilir:
+QR kod okutma + kod onayı + 10 tek kullanımlık yedek kod. Sır DB'de asla düz metin
+değil (`backend/core/crypto.ts`, AES-256-GCM, `MFA_ENCRYPTION_KEY`). Etkinse login
+`{status:"MFA_REQUIRED", challengeId}` döner, oturum sadece `/api/auth/mfa/verify`
+başarılı olunca kurulur (bkz. `auth.service.ts`teki `LoginOutcome`). Şifre
+sıfırlama + MFA bildirimleri `backend/core/email.ts` üzerinden SendGrid ile
+gönderilir — `SENDGRID_API_KEY`/`EMAIL_FROM` boşsa sessizce sunucu logu
+fallback'ine döner (yerel geliştirme SendGrid gerektirmez).
 
 ---
 
@@ -292,13 +300,13 @@ detayları istemciye sızdırmaz.
 
 ## Henüz eklenmedi (bilinçli olarak)
 
-PostgreSQL + Prisma + RLS artık tamam (bkz. "Veri katmanı ve çok kiracılık" yukarıda)
-— aşağıdaki liste ondan sonra kalanlar içindir.
+PostgreSQL + Prisma + RLS ve TOTP MFA + gerçek e-posta gönderimi artık tamam
+(bkz. "Veri katmanı ve çok kiracılık" ve MFA paragrafları yukarıda) — aşağıdaki
+liste onlardan sonra kalanlar içindir.
 
 | Alan               | Öneri                          | Notu                                                        |
 | ------------------- | ------------------------------- | -------------------------------------------------------------- |
 | Kimlik doğrulama sağlayıcısı | NextAuth / Clerk (opsiyonel) | Basit e-posta+şifre girişi zaten VAR (bkz. yukarıdaki tablo); bir SSO/sosyal login sağlayıcısına geçilirse sadece `auth.service.ts`/`getCurrentUser` değişir |
-| MFA (çok faktörlü doğrulama) | TOTP (ör. `otplib`) ya da SMS/e-posta kodu | `auth.service.ts`'teki `login` fonksiyonunda tam olarak nereye ekleneceği yorumla işaretli |
 | Oturum deposu      | Redis                          | Yatay ölçeklendiğinde (birden fazla sunucu örneği) bellek-içi oturum Map'i paylaşılmaz |
 | Ondalık hassasiyet | `decimal.js`                   | `shared/lib/money.ts` kuruş-bazlı yuvarlamayla bunu şimdilik hafifletiyor |
 | Güncel döviz kuru  | Gerçek bir sağlayıcı (TCMB/ECB/…) | `fx/fx-rate.repository.ts` şu an sabit demo kur tablosu       |
