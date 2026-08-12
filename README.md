@@ -68,6 +68,7 @@ görebilirsiniz (bkz. "Modüller"deki RBAC satırı).
 | `/ice-aktarma`, `POST /api/imports/*`          | Mizan/Muavin CSV veya Excel içe aktarma: kolon eşleştirme, önizleme, onay        |
 | `/denetim-kaydi`, `GET /api/audit-logs`        | Her bütçe hücresi değişikliğinin eski/yeni değeri + kim/ne zaman/nereden yaptığı |
 | `/hesap`, `GET,POST /api/account/mfa*`         | TOTP MFA enroll/disable (QR + yedek kodlar) — bkz. aşağıdaki paragraf            |
+| `/personel`, `GET,POST /api/personnel*`        | Personel + ücret geçmişi, brüt↔net Türkiye bordro motoru, bordro çalıştırma — SADECE Admin (bkz. aşağıdaki paragraf) |
 | RBAC (`backend/core/authorize.ts`)             | Admin / Bütçe Yöneticisi / Veri Giriş Uzmanı — tek bir izin tablosu              |
 
 Giriş, httpOnly bir oturum çerezi (`fpa_session`) set eder; kimlik artık bu çerezden
@@ -86,6 +87,21 @@ başarılı olunca kurulur (bkz. `auth.service.ts`teki `LoginOutcome`). Şifre
 sıfırlama + MFA bildirimleri `backend/core/email.ts` üzerinden SendGrid ile
 gönderilir — `SENDGRID_API_KEY`/`EMAIL_FROM` boşsa sessizce sunucu logu
 fallback'ine döner (yerel geliştirme SendGrid gerektirmez).
+
+**Personel & Bordro** (`backend/modules/personnel/`, Faz 2.1) — SADECE Admin
+görebilir (`payroll:read`/`payroll:write`, `BUDGET_MANAGER`'a bile verilmez —
+uygulamadaki ilk gerçek ADMIN/BUDGET_MANAGER izin ayrımı). `Employee`/
+`EmployeeCompensation` RLS'e tabidir VE ücret tutarı ayrıca AES-256-GCM ile
+şifreli saklanır (`compensationCiphertext`, `backend/core/crypto.ts`) — RLS +
+şifreleme birlikte, maaş verisi için çift katmanlı koruma sağlar.
+`payroll-calculator.ts`, 2026 SGK/vergi parametreleriyle (`PayrollTaxConfig` —
+küresel, kod içine gömülmemiş, `prisma/seed.ts`te veri olarak tutulur) brüt↔net
+hesaplar: kümülatif gelir vergisi matrahı (dilim aşımı doğru), SGK tavanı,
+emekli (SGDP) ve kapıcı (tam muaf) özel durumları, engellilik indirimi, asgari
+ücret istisnası, fazla mesai. "Bordro Çalıştır" önizlemesi hiçbir şey yazmaz;
+"Bütçeye Yaz" toplam işveren maliyetini `budgetLineService.bulkUpsert`
+(`source: PAYROLL`) üzerinden "Personel Giderleri" kategorisine yazar — kilit
+kontrolü ve audit kaydı oradan otomatik gelir, ikinci bir yazma noktası YOKTUR.
 
 ---
 

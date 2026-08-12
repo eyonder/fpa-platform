@@ -30,6 +30,17 @@ export type {
   ImportTargetField,
 } from "./import";
 export type { Organization } from "./organization";
+export type {
+  CompensationInputMode,
+  CreateCompensationInput,
+  CreateEmployeeInput,
+  DisabilityDegree,
+  Employee,
+  EmployeeCompensation,
+  EmployeeMonthlyBreakdown,
+  MonthlyPayrollTotal,
+  PayrollRunPreview,
+} from "./personnel";
 export type { Scenario, ScenarioKind } from "./scenario";
 export type { Membership, Role, User } from "./user";
 export type { VarianceReport, VarianceRow, VarianceStatus } from "./variance";

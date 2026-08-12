@@ -39,12 +39,14 @@ model Tenant {
   parent   Tenant?  @relation("TenantHierarchy", fields: [parentTenantId], references: [id])
   children Tenant[] @relation("TenantHierarchy")
 
-  memberships Membership[]
-  scenarios   Scenario[]
-  budgetLines BudgetLine[]
-  auditLogs   AuditLog[]
-  importJobs  ImportJob[]
-  sessions    Session[]
+  memberships           Membership[]
+  scenarios             Scenario[]
+  budgetLines           BudgetLine[]
+  auditLogs             AuditLog[]
+  importJobs            ImportJob[]
+  sessions              Session[]
+  employees             Employee[]
+  employeeCompensations EmployeeCompensation[]
 
   @@index([parentTenantId])
 }
@@ -238,6 +240,7 @@ enum AuditSource {
   MANUAL_EDIT
   FORECAST
   IMPORT
+  PAYROLL
 }
 
 model AuditLog {
@@ -316,4 +319,127 @@ model FxRate {
   rate  Float
 
   @@id([date, base, quote])
+}
+
+// ----------------------------------------------------
+// 10. Personel / Bordro (Faz 2.1)
+// ----------------------------------------------------
+// Employee/EmployeeCompensation RLS'lidir (Scenario/BudgetLine/AuditLog/
+// ImportJob setine katılır) — maaş verisi tenant'a özeldir. PayrollTaxConfig
+// KÜRESEL referans (FxRate/BudgetCategory gibi, RLS YOK) — vergi mevzuatı
+// her tenant için aynıdır. `payroll:read`/`payroll:write` izinleri SADECE
+// ADMIN'e verilir (backend/core/authorize.ts) — BUDGET_MANAGER bile maaş
+// verisini GÖREMEZ; bu, uygulamadaki ilk gerçek ADMIN/BUDGET_MANAGER
+// ayrımıdır (bkz. roadmap: "sadece yetkili (HR/Admin) tarafından görülmesini
+// sağlayan RLS ve özel şifreleme katmanı").
+
+enum DisabilityDegree {
+  NONE
+  DEGREE_1 // %80+ — en yüksek indirim
+  DEGREE_2 // %60-79
+  DEGREE_3 // %40-59
+}
+
+enum CompensationInputMode {
+  GROSS_FIXED
+  NET_FIXED
+}
+
+model Employee {
+  id       String @id
+  tenantId String
+
+  fullName        String
+  position        String
+  department      String?
+  hireDate        DateTime
+  terminationDate DateTime?
+  isActive        Boolean   @default(true)
+
+  // Vergi/SGK hesabını doğrudan etkileyen nitelikler — bkz.
+  // payroll-calculator.ts. Emekli (SGDP) işsizlik sigortasından MUAFTIR ve
+  // farklı SGK oranına tabidir; kapıcı gelir/damga vergisinden TAM MUAFTIR
+  // (sadece SGK kesilir); engellilik derecesi aylık vergi matrahından sabit
+  // bir tutar düşürür.
+  isRetired        Boolean          @default(false)
+  isConcierge      Boolean          @default(false)
+  disabilityDegree DisabilityDegree @default(NONE)
+
+  tenant        Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  compensations EmployeeCompensation[]
+
+  @@index([tenantId])
+}
+
+model EmployeeCompensation {
+  id            String   @id
+  employeeId    String
+  tenantId      String
+  effectiveFrom DateTime
+
+  inputMode CompensationInputMode
+
+  // Tutar (kuruş) burada DEĞİL — backend/core/crypto.ts (AES-256-GCM) ile
+  // şifreli JSON olarak saklanır (bkz. mfa.repository.ts'teki aynı desen):
+  // {"amountMinor": "...", "mealAllowanceDays": 20, "transportAllowanceDays": 20,
+  //  "plannedOvertimeHoursPerMonth": 0, "applyEmployerIncentive": false}
+  // RLS + bu şifreleme katmanı birlikte, roadmap'in "özel şifreleme
+  // katmanı" gereksinimini karşılar.
+  compensationCiphertext String
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId, effectiveFrom])
+  @@index([tenantId])
+}
+
+/**
+ * Küresel, düzenlenebilir vergi/SGK parametre tablosu — mali yıl başına BİR
+ * kayıt. Değerler KOD İÇİNE gömülmez (fx-rate.repository.ts'teki "sabit demo
+ * kur tablosu" felsefesiyle aynı): yasa her yıl değişir, bu bir veri
+ * güncellemesi olmalı, kod değişikliği değil. RLS YOK (bkz. dosya başı not).
+ */
+model PayrollTaxConfig {
+  fiscalYear Int @id
+
+  minimumWageGrossMonthlyMinor BigInt // Aylık brüt asgari ücret
+  sgkCeilingMinor              BigInt // SGK tavan (asgari ücretin 9 katı)
+
+  severanceCeilingH1Minor BigInt // Kıdem tazminatı tavanı (Ocak-Haziran) — bkz. dosya başı not: hesaplamada KULLANILMIYOR, ileri kullanım için saklanıyor
+  severanceCeilingH2Minor BigInt // (Temmuz-Aralık)
+
+  // Günlük istisna tutarları — bkz. payroll-calculator.ts'teki varsayım notu
+  // (tam olarak istisna tavanında ödendiği varsayılır).
+  dailyMealAllowanceExemptMinor      BigInt
+  dailyTransportAllowanceExemptMinor BigInt
+
+  // Standart çalışan oranları.
+  employeeSgkRate          Decimal @db.Decimal(6, 4) // 0.1400
+  employeeUnemploymentRate Decimal @db.Decimal(6, 4) // 0.0100
+  employerSgkRate          Decimal @db.Decimal(6, 4) // 0.2175 (teşviksiz)
+  employerSgkIncentiveRate Decimal @db.Decimal(6, 4) // 0.0500 (teşvik puanı — 0.2175'ten düşülür)
+  employerUnemploymentRate Decimal @db.Decimal(6, 4) // 0.0200
+
+  // Emekli (SGDP) oranları — işsizlik sigortası YOK.
+  retiredEmployeeSgdpRate Decimal @db.Decimal(6, 4) // 0.0750
+  retiredEmployerSgdpRate Decimal @db.Decimal(6, 4) // 0.2450 (SGDP + kısa vadeli sigorta kolları dahil)
+
+  // Kümülatif gelir vergisi dilimleri — [{uptoAnnualMinor: string|null, rate: number}],
+  // artan sırada, SON eleman uptoAnnualMinor:null (üst sınırsız dilim).
+  incomeTaxBrackets Json
+
+  stampDutyRate Decimal @db.Decimal(6, 5) // 0.00759
+
+  // Asgari ücret istisnası — sabit aylık tavan, hesaplanan vergiden düşülür.
+  minimumWageIncomeTaxExemptionMonthlyMinor BigInt
+  minimumWageStampTaxExemptionMonthlyMinor  BigInt
+
+  // Engellilik indirimi — aylık matrahtan düşülen SABİT tutar (dereceye göre).
+  disabilityDeductionDegree1Minor BigInt
+  disabilityDeductionDegree2Minor BigInt
+  disabilityDeductionDegree3Minor BigInt
+
+  standardMonthlyWorkingHours Int     @default(225)
+  overtimePremiumMultiplier   Decimal @default(1.5) @db.Decimal(4, 2)
 }

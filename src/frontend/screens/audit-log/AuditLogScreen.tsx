@@ -10,12 +10,14 @@ const SOURCE_LABEL: Record<AuditSource, string> = {
   MANUAL_EDIT: "Manuel Giriş",
   FORECAST: "Forecast",
   IMPORT: "İçe Aktarma",
+  PAYROLL: "Bordro",
 };
 
 const SOURCE_TONE: Record<AuditSource, "neutral" | "ledger" | "brick"> = {
   MANUAL_EDIT: "neutral",
   FORECAST: "ledger",
   IMPORT: "brick",
+  PAYROLL: "ledger",
 };
 
 const ACTION_LABEL: Record<AuditAction, string> = {

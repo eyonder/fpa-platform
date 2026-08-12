@@ -2,6 +2,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { BudgetCategoryType, PrismaClient, Role, ScenarioKind } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
+import { encrypt } from "../src/backend/core/crypto";
 import { toMinorUnits } from "../src/shared/lib/money";
 
 /**
@@ -75,10 +76,14 @@ function flatMonthlyLines(
 async function resetDatabase() {
   // Bağımlılık sırasına göre (çocuktan ebeveyne) sil — cascade kurallarına
   // güvenmek yerine açık ve tahmin edilebilir.
+  await prisma.employeeCompensation.deleteMany();
+  await prisma.mfaBackupCode.deleteMany();
+  await prisma.mfaChallenge.deleteMany();
   await prisma.budgetLine.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.importJob.deleteMany();
   await prisma.scenario.deleteMany();
+  await prisma.employee.deleteMany();
   await prisma.membership.deleteMany();
   await prisma.session.deleteMany();
   await prisma.passwordResetToken.deleteMany();
@@ -86,6 +91,7 @@ async function resetDatabase() {
   await prisma.tenant.deleteMany();
   await prisma.user.deleteMany();
   await prisma.fxRate.deleteMany();
+  await prisma.payrollTaxConfig.deleteMany();
 }
 
 async function seedTenants() {
@@ -479,6 +485,159 @@ async function seedFxRates() {
   });
 }
 
+/**
+ * 2026 mali yılı vergi/SGK parametreleri — KULLANICI TARAFINDAN VERİLEN
+ * GERÇEK rakamlardır (kod içine gömülmez, bkz. schema.prisma'daki
+ * PayrollTaxConfig yorumu). Değerler değiştiğinde SADECE bu fonksiyon
+ * güncellenir, hesap motoruna (payroll-calculator.ts) DOKUNULMAZ.
+ */
+async function seedPayrollTaxConfig() {
+  await prisma.payrollTaxConfig.create({
+    data: {
+      fiscalYear: 2026,
+      minimumWageGrossMonthlyMinor: BigInt(3_303_000), // 33.030,00 TRY
+      sgkCeilingMinor: BigInt(29_727_000), // 297.270,00 TRY (asgari ücretin 9 katı)
+      severanceCeilingH1Minor: BigInt(6_494_877), // 64.948,77 TRY (Ocak-Haziran)
+      severanceCeilingH2Minor: BigInt(7_372_987), // 73.729,87 TRY (Temmuz-Aralık)
+      dailyMealAllowanceExemptMinor: BigInt(30_000), // 300,00 TRY
+      dailyTransportAllowanceExemptMinor: BigInt(15_800), // 158,00 TRY
+      employeeSgkRate: 0.14,
+      employeeUnemploymentRate: 0.01,
+      employerSgkRate: 0.2175,
+      employerSgkIncentiveRate: 0.05,
+      employerUnemploymentRate: 0.02,
+      retiredEmployeeSgdpRate: 0.075,
+      retiredEmployerSgdpRate: 0.245,
+      incomeTaxBrackets: [
+        { uptoAnnualMinor: 19_000_000, rate: 0.15 }, // 190.000 TRY'ye kadar
+        { uptoAnnualMinor: 40_000_000, rate: 0.2 }, // 400.000 TRY'ye kadar
+        { uptoAnnualMinor: 150_000_000, rate: 0.27 }, // 1.500.000 TRY'ye kadar
+        { uptoAnnualMinor: 530_000_000, rate: 0.35 }, // 5.300.000 TRY'ye kadar
+        { uptoAnnualMinor: null, rate: 0.4 }, // üzeri
+      ],
+      stampDutyRate: 0.00759,
+      minimumWageIncomeTaxExemptionMonthlyMinor: BigInt(421_133), // 4.211,33 TRY
+      minimumWageStampTaxExemptionMonthlyMinor: BigInt(25_070), // 250,70 TRY
+      disabilityDeductionDegree1Minor: BigInt(1_200_000), // 12.000,00 TRY
+      disabilityDeductionDegree2Minor: BigInt(700_000), // 7.000,00 TRY
+      disabilityDeductionDegree3Minor: BigInt(300_000), // 3.000,00 TRY
+      standardMonthlyWorkingHours: 225,
+      overtimePremiumMultiplier: 1.5,
+    },
+  });
+}
+
+interface CompensationPayload {
+  amountMinor: number;
+  mealAllowanceDays: number;
+  transportAllowanceDays: number;
+  plannedOvertimeHoursPerMonth: number;
+  applyEmployerIncentive: boolean;
+}
+
+function encryptCompensation(payload: CompensationPayload): string {
+  return encrypt(JSON.stringify(payload));
+}
+
+/** Demo personel — sadece demo-tenant için (Personel ekranını uçtan uca deneyebilmek amacıyla). */
+async function seedPersonnel() {
+  const employees = [
+    {
+      id: "emp-elif",
+      fullName: "Elif Mühendis",
+      position: "Yazılım Mühendisi",
+      department: "Ürün",
+      hireDate: new Date("2023-01-15"),
+      isRetired: false,
+      isConcierge: false,
+      disabilityDegree: "NONE" as const,
+      compensation: {
+        effectiveFrom: new Date("2026-01-01"),
+        inputMode: "GROSS_FIXED" as const,
+        payload: {
+          amountMinor: toMinorUnits(90000),
+          mealAllowanceDays: 20,
+          transportAllowanceDays: 20,
+          plannedOvertimeHoursPerMonth: 0,
+          applyEmployerIncentive: false,
+        },
+      },
+    },
+    {
+      id: "emp-kemal",
+      fullName: "Kemal Usta",
+      position: "Üretim Operatörü",
+      department: "Üretim",
+      hireDate: new Date("2020-06-01"),
+      isRetired: false,
+      isConcierge: false,
+      disabilityDegree: "NONE" as const,
+      compensation: {
+        effectiveFrom: new Date("2026-01-01"),
+        inputMode: "GROSS_FIXED" as const,
+        payload: {
+          amountMinor: toMinorUnits(45000),
+          mealAllowanceDays: 22,
+          transportAllowanceDays: 22,
+          plannedOvertimeHoursPerMonth: 10,
+          applyEmployerIncentive: true,
+        },
+      },
+    },
+    {
+      id: "emp-nazan",
+      fullName: "Nazan Danışman",
+      position: "Mali Danışman",
+      department: "Finans",
+      hireDate: new Date("2024-03-01"),
+      isRetired: true,
+      isConcierge: false,
+      disabilityDegree: "NONE" as const,
+      compensation: {
+        effectiveFrom: new Date("2026-01-01"),
+        // Net sabit: sözleşmesi net 40.000 TRY üzerinden — brüt her ay
+        // kümülatif matraha göre payroll-calculator.ts'teki netToGross ile
+        // YENİDEN çözülür.
+        inputMode: "NET_FIXED" as const,
+        payload: {
+          amountMinor: toMinorUnits(40000),
+          mealAllowanceDays: 0,
+          transportAllowanceDays: 0,
+          plannedOvertimeHoursPerMonth: 0,
+          applyEmployerIncentive: false,
+        },
+      },
+    },
+  ];
+
+  for (const employee of employees) {
+    await prisma.employee.create({
+      data: {
+        id: employee.id,
+        tenantId: "demo-tenant",
+        fullName: employee.fullName,
+        position: employee.position,
+        department: employee.department,
+        hireDate: employee.hireDate,
+        isRetired: employee.isRetired,
+        isConcierge: employee.isConcierge,
+        disabilityDegree: employee.disabilityDegree,
+      },
+    });
+
+    await prisma.employeeCompensation.create({
+      data: {
+        id: crypto.randomUUID(),
+        employeeId: employee.id,
+        tenantId: "demo-tenant",
+        effectiveFrom: employee.compensation.effectiveFrom,
+        inputMode: employee.compensation.inputMode,
+        compensationCiphertext: encryptCompensation(employee.compensation.payload),
+      },
+    });
+  }
+}
+
 async function main() {
   await resetDatabase();
   await seedTenants();
@@ -486,6 +645,8 @@ async function main() {
   await seedScenarios();
   await seedBudgetCategoriesAndLines();
   await seedFxRates();
+  await seedPayrollTaxConfig();
+  await seedPersonnel();
   console.log("Seed tamamlandı.");
 }
 

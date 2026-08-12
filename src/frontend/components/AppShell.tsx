@@ -12,6 +12,11 @@ const NAV = [
   { href: "/ice-aktarma", label: "İçe Aktarma" },
   { href: "/denetim-kaydi", label: "Denetim Kaydı" },
   { href: "/hesap", label: "Hesap" },
+  // Sadece ADMIN — maaş verisi gizliliği (bkz. backend/core/authorize.ts'teki
+  // payroll:read/payroll:write notu). Bu SADECE UX içindir; asıl güvenlik
+  // sınırı backend'de zorunlu kılınır — bu satır olmasa bile BUDGET_MANAGER/
+  // DATA_ENTRY /api/personnel/* uçlarında 403 alır.
+  { href: "/personel", label: "Personel", roles: ["ADMIN"] as Role[] },
 ];
 
 interface AppShellUser {
@@ -39,15 +44,17 @@ export function AppShell({
           </Link>
 
           <nav className="flex items-center gap-6">
-            {NAV.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="rounded-sm text-sm text-muted transition-colors hover:text-ink focus-visible:ring-2 focus-visible:ring-ledger focus-visible:ring-offset-2 focus-visible:outline-none"
-              >
-                {item.label}
-              </Link>
-            ))}
+            {NAV.filter((item) => !item.roles || item.roles.includes(user.role)).map(
+              (item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className="rounded-sm text-sm text-muted transition-colors hover:text-ink focus-visible:ring-2 focus-visible:ring-ledger focus-visible:ring-offset-2 focus-visible:outline-none"
+                >
+                  {item.label}
+                </Link>
+              ),
+            )}
           </nav>
 
           <div className="ml-auto flex items-center gap-3">

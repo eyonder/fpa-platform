@@ -25,7 +25,11 @@ export type Permission =
   /** Mizan/Muavin dosyası yükleme, eşleştirme, onaylama. */
   | "import:run"
   /** Denetim (audit) kaydını görüntüleme. */
-  | "audit:read";
+  | "audit:read"
+  /** Personel/maaş verisini görüntüleme (bordro önizleme dahil). */
+  | "payroll:read"
+  /** Personel ekleme/düzenleme, ücret kaydı girme, bordroyu bütçeye yazma. */
+  | "payroll:write";
 
 const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   ADMIN: [
@@ -36,7 +40,13 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "consolidation:run",
     "import:run",
     "audit:read",
+    "payroll:read",
+    "payroll:write",
   ],
+  // ÖNEMLİ: payroll:read/payroll:write BİLEREK burada YOK. Maaş verisi
+  // gizliliği (bkz. Employee/EmployeeCompensation RLS + şifreleme notu,
+  // prisma/schema.prisma) sadece ADMIN'e (HR/Admin) açıktır — bu,
+  // uygulamadaki İLK gerçek ADMIN/BUDGET_MANAGER izin ayrımıdır.
   BUDGET_MANAGER: [
     "scenario:manage",
     "scenario:lock",
@@ -64,6 +74,8 @@ const PERMISSION_LABELS: Record<Permission, string> = {
   "consolidation:run": "konsolidasyon çalıştırma",
   "import:run": "dosya içe aktarma",
   "audit:read": "denetim kaydını görüntüleme",
+  "payroll:read": "personel/maaş verisini görüntüleme",
+  "payroll:write": "personel/bordro işlemleri",
 };
 
 const ROLE_LABELS: Record<Role, string> = {
