@@ -44,6 +44,19 @@ export type {
   ExpenseEntryStatus,
   UpdateExpenseEntryInput,
 } from "./expense-entry";
+export type {
+  CashFlowProjectionEntry,
+  CreateFixedAssetInput,
+  DepreciationPreview,
+  DepreciationPreviewAssetBreakdown,
+  DepreciationScheduleMonth,
+  FixedAsset,
+  FixedAssetCategory,
+  FixedAssetFeasibility,
+  FixedAssetStatus,
+  UpdateFixedAssetInput,
+  VukAmortismanConfigEntry,
+} from "./fixed-asset";
 export type { Organization } from "./organization";
 export type {
   CompensationInputMode,

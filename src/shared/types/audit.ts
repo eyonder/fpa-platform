@@ -7,7 +7,8 @@
 export type AuditAction = "CREATE" | "UPDATE";
 
 /** Değişikliğin hangi akıştan geldiği — kaynağa göre farklı güven seviyesi/filtre. */
-export type AuditSource = "MANUAL_EDIT" | "FORECAST" | "IMPORT" | "PAYROLL" | "EXPENSE";
+export type AuditSource =
+  "MANUAL_EDIT" | "FORECAST" | "IMPORT" | "PAYROLL" | "EXPENSE" | "DEPRECIATION";
 
 export interface AuditLogEntry {
   id: string;

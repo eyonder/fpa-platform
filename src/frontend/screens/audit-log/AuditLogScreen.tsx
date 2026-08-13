@@ -12,6 +12,7 @@ const SOURCE_LABEL: Record<AuditSource, string> = {
   IMPORT: "İçe Aktarma",
   PAYROLL: "Bordro",
   EXPENSE: "Gider Merkezi",
+  DEPRECIATION: "Amortisman",
 };
 
 const SOURCE_TONE: Record<AuditSource, "neutral" | "ledger" | "brick"> = {
@@ -20,6 +21,7 @@ const SOURCE_TONE: Record<AuditSource, "neutral" | "ledger" | "brick"> = {
   IMPORT: "brick",
   PAYROLL: "ledger",
   EXPENSE: "ledger",
+  DEPRECIATION: "ledger",
 };
 
 const ACTION_LABEL: Record<AuditAction, string> = {

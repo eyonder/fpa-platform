@@ -51,6 +51,7 @@ model Tenant {
   allocationKeys        AllocationKey[]
   allocationKeyMembers  AllocationKeyMember[]
   expenseEntries        ExpenseEntry[]
+  fixedAssets           FixedAsset[]
 
   @@index([parentTenantId])
 }
@@ -248,6 +249,7 @@ enum AuditSource {
   IMPORT
   PAYROLL
   EXPENSE
+  DEPRECIATION
 }
 
 model AuditLog {
@@ -567,4 +569,93 @@ model ExpenseEntry {
   @@unique([tenantId, scenarioId, costCenterId, categoryId, month])
   @@index([tenantId, scenarioId, status])
   @@index([tenantId, costCenterId])
+}
+
+// ----------------------------------------------------
+// 12. Sabit Kıymetler / Amortisman (Faz 2.3)
+// ----------------------------------------------------
+// v1 SADECE VUK/TDHP kapsar — tek gerçek devlet-oranlı (rate-table) standart.
+// UFRS/SPK/USGAAP prensip bazlıdır (şirket kendi faydalı ömrünü seçer,
+// resmi oran tablosu YOK) ve bilerek ERTELENMİŞTİR.
+//
+// ExpenseEntry'nin AKSİNE FixedAsset'te COMMITTED durumu YOKTUR: bir
+// varlığın amortismanı BİRDEN ÇOK mali yıla (Scenario'ya) yayılır, tek bir
+// "commit anı" yoktur. Onay akışı DRAFT/REJECTED -> SUBMITTED -> APPROVED/
+// REJECTED'te durur; bütçeye yazma AYRI, senaryo bazlı, TEKRAR ÇALIŞTIRILABİLİR
+// bir eylemdir (depreciation.service.ts#previewForScenario/commitForScenario)
+// — payroll.service.ts'teki preview/commitToBudget'ın (ara durum saklamadan
+// HER SEFERİNDE yeniden hesaplama) AYNI disiplini, ExpenseEntry'nin tek
+// seferlik commit'i DEĞİL.
+
+enum FixedAssetCategory {
+  BUILDINGS
+  MACHINERY_EQUIPMENT
+  VEHICLES
+  FURNITURE_FIXTURES
+  COMPUTER_HARDWARE
+  LEASEHOLD_IMPROVEMENTS
+}
+
+// Küresel referans (PayrollTaxConfig gibi) — RLS YOK, VUK oranları her
+// tenant için aynı yasal mevzuattır. Doğal anahtar: category. Kullanıcının
+// SAĞLADIĞI resmi VUK oranları (bkz. seed.ts#seedVukAmortismanConfig) —
+// kod içine gömülmez, payroll'daki "config veri, kod değil" felsefesiyle aynı.
+model VukAmortismanConfig {
+  category        FixedAssetCategory @id
+  usefulLifeYears Int
+  annualRate      Decimal            @db.Decimal(6, 4)
+  vukReference    String
+}
+
+enum FixedAssetStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+// Surrogate id (ExpenseEntry ile AYNI gerekçe: bağımsız bir onay akışı durum
+// makinesi var). Amortisman programı (schedule) AYRI bir tabloda SAKLANMAZ —
+// depreciation-schedule.ts saf fonksiyonu bu satırın alanlarından
+// (baseValueMinor, category/override, acquisitionDate) HER İSTEKTE YENİDEN
+// üretir — payroll preview'daki "recompute, don't persist" disipliniyle aynı.
+model FixedAsset {
+  id       String @id
+  tenantId String
+
+  assetName       String
+  category        FixedAssetCategory
+  acquisitionDate DateTime @db.Date
+  baseValueMinor  BigInt
+
+  // SADECE LEASEHOLD_IMPROVEMENTS için anlamlıdır — diğer beş kategorinin
+  // oranı doğrudan yasal zorunluluktur, iş takdirine YER YOK; servis
+  // katmanında diğer kategoriler için reddedilir (bkz. fixed-asset.service.ts).
+  usefulLifeYearsOverride Int?
+
+  // NPV/IRR girdileri — HER istekte yeniden hesaplanır, asla saklanmaz (bkz.
+  // npv-irr.ts). [{"year":1,"amountMinor":...}, ...], yıl 1'den başlar; yıl 0
+  // (ilk yatırım, -baseValueMinor) hesaplama sırasında otomatik eklenir.
+  cashFlowProjectionMinor Json
+  discountRate            Decimal @db.Decimal(6, 4)
+
+  description String?
+  status      FixedAssetStatus @default(DRAFT)
+
+  submittedByUserId   String?
+  submittedByUserName String?
+  submittedAt         DateTime?
+
+  decidedByUserId   String?
+  decidedByUserName String?
+  decidedAt         DateTime?
+  rejectionReason   String?
+
+  createdAt DateTime
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([tenantId, category])
 }

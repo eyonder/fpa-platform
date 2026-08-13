@@ -82,6 +82,14 @@ async function resetDatabase() {
   await prisma.budgetLine.deleteMany();
   await prisma.auditLog.deleteMany();
   await prisma.importJob.deleteMany();
+  // Faz 2.2/2.3 eklendiğinde BURAYA eklenmemişti (Tenant cascade'i ile
+  // dolaylı temizleniyordu, zararsız ama "açık, cascade'e güvenme"
+  // felsefesiyle tutarsızdı) — şimdi düzeltildi.
+  await prisma.expenseEntry.deleteMany();
+  await prisma.allocationKeyMember.deleteMany();
+  await prisma.allocationKey.deleteMany();
+  await prisma.costCenter.deleteMany();
+  await prisma.fixedAsset.deleteMany();
   await prisma.scenario.deleteMany();
   await prisma.employee.deleteMany();
   await prisma.membership.deleteMany();
@@ -92,6 +100,7 @@ async function resetDatabase() {
   await prisma.user.deleteMany();
   await prisma.fxRate.deleteMany();
   await prisma.payrollTaxConfig.deleteMany();
+  await prisma.vukAmortismanConfig.deleteMany();
 }
 
 async function seedTenants() {
@@ -316,6 +325,12 @@ async function seedBudgetCategoriesAndLines() {
         type: BudgetCategoryType.EXPENSE,
         sortOrder: 6,
       },
+      {
+        id: "cat-amortisman",
+        name: "Amortisman Giderleri",
+        type: BudgetCategoryType.EXPENSE,
+        sortOrder: 7,
+      },
     ],
   });
 
@@ -527,6 +542,56 @@ async function seedPayrollTaxConfig() {
   });
 }
 
+/**
+ * VUK/TDHP amortisman oran tablosu — kullanıcının verdiği GERÇEK rakamlar
+ * (bkz. prisma/schema.prisma'daki VukAmortismanConfig yorumu). Kod içine
+ * GÖMÜLMEZ, `seedPayrollTaxConfig`teki AYNI "config veri, kod değil" felsefesi.
+ */
+async function seedVukAmortismanConfig() {
+  await prisma.vukAmortismanConfig.createMany({
+    data: [
+      {
+        category: "BUILDINGS",
+        usefulLifeYears: 50,
+        annualRate: 0.02,
+        vukReference: "VUK G.T. 333 (1.1.1)",
+      },
+      {
+        category: "MACHINERY_EQUIPMENT",
+        usefulLifeYears: 10,
+        annualRate: 0.1,
+        vukReference: "VUK G.T. 333 (3.)",
+      },
+      {
+        category: "VEHICLES",
+        usefulLifeYears: 5,
+        annualRate: 0.2,
+        vukReference: "VUK G.T. 333 (6.)",
+      },
+      {
+        category: "FURNITURE_FIXTURES",
+        usefulLifeYears: 5,
+        annualRate: 0.2,
+        vukReference: "VUK G.T. 333 (55.)",
+      },
+      {
+        category: "COMPUTER_HARDWARE",
+        usefulLifeYears: 4,
+        annualRate: 0.25,
+        vukReference: "VUK G.T. 333 (54.)",
+      },
+      {
+        // Varsayılan — belirli bir sözleşme süresi varsa FixedAsset.usefulLifeYearsOverride
+        // ile geçersiz kılınır (rate = 1/süre). Bkz. fixed-asset.service.ts.
+        category: "LEASEHOLD_IMPROVEMENTS",
+        usefulLifeYears: 5,
+        annualRate: 0.2,
+        vukReference: "VUK G.T. 333 / GVK — sözleşme süresi belirsizse 5 yıl",
+      },
+    ],
+  });
+}
+
 interface CompensationPayload {
   amountMinor: number;
   mealAllowanceDays: number;
@@ -646,6 +711,7 @@ async function main() {
   await seedBudgetCategoriesAndLines();
   await seedFxRates();
   await seedPayrollTaxConfig();
+  await seedVukAmortismanConfig();
   await seedPersonnel();
   console.log("Seed tamamlandı.");
 }
