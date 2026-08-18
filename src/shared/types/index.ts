@@ -8,6 +8,7 @@ export type {
   BudgetLineInput,
   BudgetSheet,
 } from "./budget-line";
+export type { CashFlowMonthRow, CashFlowReport } from "./cash-flow";
 export type {
   ConsolidationMissingOrg,
   ConsolidationOrgBreakdown,
