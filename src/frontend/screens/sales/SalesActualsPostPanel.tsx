@@ -6,7 +6,7 @@ import { Card } from "@/frontend/components/ui/Card";
 import { useSalesActualsPreview } from "@/frontend/hooks/useSalesActualsPreview";
 import { useScenarios } from "@/frontend/hooks/useScenarios";
 import { apiClient, ApiError } from "@/frontend/lib/api-client";
-import { formatAmount } from "@/frontend/lib/format";
+import { formatAmount, formatDate } from "@/frontend/lib/format";
 import type { BudgetLine } from "@/shared/types";
 
 const INPUT_CLASS =
@@ -52,7 +52,7 @@ export function SalesActualsPostPanel() {
   return (
     <Card
       title="Gerçekleşen Satışları Bütçeye Yaz"
-      hint="Kazanılan (WON) TÜM fırsatların gerçek kapanış ayına (closedAt) düşen toplam tutarını 'Gelir' kategorisine yazar."
+      hint="Kazanılan (WON) TÜM fırsatların hakediş faturalama tarihlerine göre bölünmüş tutarlarını 'Gelir' kategorisine yazar."
     >
       <div className="flex-1">
         <label className="block text-sm font-medium text-ink">Senaryo</label>
@@ -115,14 +115,14 @@ export function SalesActualsPostPanel() {
 
               <details className="text-sm">
                 <summary className="cursor-pointer font-medium text-ink">
-                  Fırsat bazlı ayrıntı ({previewState.preview.opportunities.length}{" "}
-                  fırsat)
+                  Hakediş bazlı ayrıntı ({previewState.preview.opportunities.length}{" "}
+                  hakediş)
                 </summary>
                 <ul className="tabular mt-2 space-y-1 text-xs">
                   {previewState.preview.opportunities.map((o) => (
-                    <li key={o.opportunityId}>
-                      {o.customerName} — {o.dealName}: {o.month}. ay{" "}
-                      {formatAmount(o.amount)}
+                    <li key={`${o.opportunityId}-${o.billingDate}`}>
+                      {o.customerName} — {o.dealName}: {formatDate(o.billingDate)} (
+                      {o.month}. ay) {formatAmount(o.amount)}
                     </li>
                   ))}
                 </ul>

@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Card } from "@/frontend/components/ui/Card";
+import { useSalesBillingMilestones } from "@/frontend/hooks/useSalesBillingMilestones";
 import { apiClient, ApiError } from "@/frontend/lib/api-client";
 import { formatAmount, formatDate } from "@/frontend/lib/format";
+import { roundMoney } from "@/shared/lib/money";
 import type {
+  SalesBillingMilestone,
   SalesOpportunity,
   SalesOpportunityStage,
   SalesStageConfigEntry,
@@ -53,6 +56,7 @@ export function SalesOpportunityListPanel({
   onChanged: () => void;
 }) {
   const [actionError, setActionError] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const close = async (id: string, outcome: "WON" | "LOST") => {
     setActionError(null);
@@ -95,57 +99,74 @@ export function SalesOpportunityListPanel({
           </thead>
           <tbody>
             {opportunities.map((opportunity) => (
-              <tr
-                key={opportunity.id}
-                className="tabular border-b border-rule last:border-0"
-              >
-                <td className="py-2 pr-3 font-medium text-ink">
-                  {opportunity.customerName}
-                </td>
-                <td className="py-2 pr-3">{opportunity.dealName}</td>
-                <td className="py-2 pr-3">
-                  {formatDate(opportunity.expectedCloseDate)}
-                </td>
-                <td className="py-2 pr-3">
-                  {formatAmount(opportunity.expectedValue, "TRY")}
-                </td>
-                <td className="py-2 pr-3">
-                  <Badge tone={STAGE_TONE[opportunity.stage]}>
-                    {STAGE_LABEL[opportunity.stage]}
-                  </Badge>
-                </td>
-                <td className="py-2 pr-3">
-                  {winProbabilityLabel(opportunity, stageConfig)}
-                </td>
-                <td className="space-x-2 py-2 pr-3">
-                  {opportunity.closedAt ? (
+              <Fragment key={opportunity.id}>
+                <tr className="tabular border-b border-rule last:border-0">
+                  <td className="py-2 pr-3 font-medium text-ink">
+                    {opportunity.customerName}
+                  </td>
+                  <td className="py-2 pr-3">{opportunity.dealName}</td>
+                  <td className="py-2 pr-3">
+                    {formatDate(opportunity.expectedCloseDate)}
+                  </td>
+                  <td className="py-2 pr-3">
+                    {formatAmount(opportunity.expectedValue, "TRY")}
+                  </td>
+                  <td className="py-2 pr-3">
+                    <Badge tone={STAGE_TONE[opportunity.stage]}>
+                      {STAGE_LABEL[opportunity.stage]}
+                    </Badge>
+                  </td>
+                  <td className="py-2 pr-3">
+                    {winProbabilityLabel(opportunity, stageConfig)}
+                  </td>
+                  <td className="space-x-2 py-2 pr-3">
                     <button
                       type="button"
-                      onClick={() => reopen(opportunity.id)}
+                      onClick={() =>
+                        setExpandedId(
+                          expandedId === opportunity.id ? null : opportunity.id,
+                        )
+                      }
                       className={SMALL_SECONDARY_BUTTON}
                     >
-                      Yeniden Aç
+                      Hakediş Tarihleri
                     </button>
-                  ) : (
-                    <>
+                    {opportunity.closedAt ? (
                       <button
                         type="button"
-                        onClick={() => close(opportunity.id, "WON")}
+                        onClick={() => reopen(opportunity.id)}
                         className={SMALL_SECONDARY_BUTTON}
                       >
-                        Kazanıldı
+                        Yeniden Aç
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => close(opportunity.id, "LOST")}
-                        className={DANGER_BUTTON}
-                      >
-                        Kaybedildi
-                      </button>
-                    </>
-                  )}
-                </td>
-              </tr>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => close(opportunity.id, "WON")}
+                          className={SMALL_SECONDARY_BUTTON}
+                        >
+                          Kazanıldı
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => close(opportunity.id, "LOST")}
+                          className={DANGER_BUTTON}
+                        >
+                          Kaybedildi
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+                {expandedId === opportunity.id ? (
+                  <tr className="border-b border-rule last:border-0">
+                    <td colSpan={7} className="bg-paper px-3 py-3">
+                      <BillingMilestonesEditor opportunity={opportunity} />
+                    </td>
+                  </tr>
+                ) : null}
+              </Fragment>
             ))}
           </tbody>
         </table>
@@ -155,6 +176,146 @@ export function SalesOpportunityListPanel({
 
       <NewSalesOpportunityForm onCreated={onChanged} />
     </Card>
+  );
+}
+
+/** `useSalesBillingMilestones`i sarmalar, yüklenene kadar bekler — bkz.
+ * `FixedAssetListPanel.tsx`teki `NewFixedAssetForm`'un dinamik nakit akışı
+ * satırlarıyla AYNI ekle/kaldır/güncelle deseni. WON'a kapatmadan ÖNCE
+ * (fırsat AÇIKKEN) doldurulması gerekir — bkz. sales-opportunity.service.ts#close. */
+function BillingMilestonesEditor({ opportunity }: { opportunity: SalesOpportunity }) {
+  const { state, reload } = useSalesBillingMilestones(opportunity.id);
+
+  if (state.status === "loading") {
+    return <p className="text-sm text-muted">Yükleniyor…</p>;
+  }
+  if (state.status === "error") {
+    return <p className="text-sm text-brick">{state.message}</p>;
+  }
+
+  return (
+    <BillingMilestonesForm
+      key={opportunity.id}
+      opportunity={opportunity}
+      initialMilestones={state.milestones}
+      onSaved={reload}
+    />
+  );
+}
+
+function BillingMilestonesForm({
+  opportunity,
+  initialMilestones,
+  onSaved,
+}: {
+  opportunity: SalesOpportunity;
+  initialMilestones: SalesBillingMilestone[];
+  onSaved: () => void;
+}) {
+  const [rows, setRows] = useState<SalesBillingMilestone[]>(initialMilestones);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const addRow = () => {
+    setRows((prev) => [...prev, { billingDate: "", amount: 0 }]);
+    setSaved(false);
+  };
+
+  const updateRow = (index: number, patch: Partial<SalesBillingMilestone>) => {
+    setRows((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+    setSaved(false);
+  };
+
+  const removeRow = (index: number) => {
+    setRows((prev) => prev.filter((_, i) => i !== index));
+    setSaved(false);
+  };
+
+  // Sadece UI ipucu — asıl kontrol sunucu tarafında (bkz.
+  // sales-opportunity.service.ts#assertMilestonesSumMatches).
+  const total = roundMoney(rows.reduce((sum, r) => sum + (Number(r.amount) || 0), 0));
+  const matches = Math.abs(total - opportunity.expectedValue) <= 0.01;
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await apiClient.post(
+        `/sales-opportunities/${opportunity.id}/billing-milestones`,
+        {
+          milestones: rows.map((r) => ({
+            billingDate: r.billingDate,
+            amount: Number(r.amount),
+          })),
+        },
+      );
+      setSaved(true);
+      onSaved();
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Hakediş tarihleri kaydedilemedi.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm font-medium text-ink">Hakediş Faturalama Tarihleri</p>
+
+      {rows.map((row, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <input
+            required
+            type="date"
+            value={row.billingDate}
+            onChange={(e) => updateRow(i, { billingDate: e.target.value })}
+            className="rounded-md border border-rule bg-surface px-2 py-1 text-sm"
+          />
+          <input
+            required
+            type="number"
+            min="0"
+            step="0.01"
+            value={row.amount}
+            onChange={(e) => updateRow(i, { amount: Number(e.target.value) })}
+            placeholder="Tutar (TRY)"
+            className="flex-1 rounded-md border border-rule bg-surface px-2 py-1 text-sm"
+          />
+          <button
+            type="button"
+            onClick={() => removeRow(i)}
+            className={SMALL_SECONDARY_BUTTON}
+          >
+            Kaldır
+          </button>
+        </div>
+      ))}
+
+      <button type="button" onClick={addRow} className={SMALL_SECONDARY_BUTTON}>
+        + Hakediş Tarihi Ekle
+      </button>
+
+      <p className={`text-xs ${matches ? "text-ledger" : "text-brick"}`}>
+        Toplam: {formatAmount(total, "TRY")} / Beklenen tutar:{" "}
+        {formatAmount(opportunity.expectedValue, "TRY")}
+      </p>
+
+      {error ? <p className="text-sm text-brick">{error}</p> : null}
+      {saved ? <p className="text-sm text-ledger">Kaydedildi.</p> : null}
+
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={saving}
+        className={PRIMARY_BUTTON}
+      >
+        {saving ? "Kaydediliyor…" : "Kaydet"}
+      </button>
+    </div>
   );
 }
 

@@ -34,9 +34,11 @@ export function SalesScreen({ role }: { role: Role }) {
       <div>
         <h1 className="text-lg font-semibold tracking-tight">Satış</h1>
         <p className="mt-1 text-sm text-muted">
-          Satış fırsatları (pipeline). Kazanılan (WON) fırsatlar gerçek kapanış ayına
-          tam tutarıyla, açık fırsatlar beklenen kapanış ayına kazanma olasılığıyla
-          ağırlıklandırılmış tutarıyla &quot;Gelir&quot; kategorisine yazılabilir.
+          Satış fırsatları (pipeline). Kazanılan (WON) fırsatlar hakediş faturalama
+          tarihlerine göre bölünmüş tutarlarıyla, açık fırsatlar beklenen kapanış ayına
+          kazanma olasılığıyla ağırlıklandırılmış tutarıyla &quot;Gelir&quot;
+          kategorisine yazılabilir. Bir fırsatı Kazanıldı olarak kapatmadan önce en az
+          bir hakediş faturalama tarihi girilmelidir.
         </p>
       </div>
 

@@ -1,6 +1,8 @@
 import { AppError, NotFoundError } from "@/backend/core/errors";
 import type { RequestContext } from "@/backend/core/tenant";
+import { roundMoney } from "@/shared/lib/money";
 import type {
+  SalesBillingMilestone,
   SalesOpportunity,
   SalesOpportunityStage,
   SalesStageConfigEntry,
@@ -9,10 +11,16 @@ import type {
 import type {
   CreateSalesOpportunityInput,
   ListSalesOpportunitiesQuery,
+  SetBillingMilestonesInput,
   UpdateSalesOpportunityInput,
 } from "./sales.schema";
+import { salesBillingMilestoneRepository } from "./sales-billing-milestone.repository";
 import { salesOpportunityRepository } from "./sales-opportunity.repository";
 import { salesStageConfigRepository } from "./sales-stage-config.repository";
+
+// 1 kuruş — money.ts'teki 2 ondalık hassasiyetle uyumlu; upsertAllocationKeySchema'daki
+// ±0.01 (orada yüzde puanı) desenini AYNI tolerans büyüklüğüyle yansıtır.
+const BILLING_MILESTONE_SUM_TOLERANCE = 0.01;
 
 /**
  * İŞ MANTIĞI KATMANI (Service).
@@ -69,6 +77,19 @@ export const salesOpportunityService = {
     const opportunity = await this.get(context.tenantId, id);
     assertNotClosed(opportunity);
 
+    if (outcome === "WON") {
+      // Hakediş faturalama tarihleri WON'a kapatmadan ÖNCE (açıkken)
+      // girilmiş olmalı — bkz. sales.ts'teki dosya başı notu ve
+      // setBillingMilestones (assertNotClosed nedeniyle kapandıktan SONRA
+      // milestone eklenemez, yeniden açılması gerekir).
+      const milestones = await salesBillingMilestoneRepository.findByOpportunity(
+        context.tenantId,
+        id,
+      );
+      assertHasBillingMilestones(milestones);
+      assertMilestonesSumMatches(opportunity, milestones);
+    }
+
     const updated = await salesOpportunityRepository.transitionToClosed(
       context.tenantId,
       id,
@@ -91,6 +112,33 @@ export const salesOpportunityService = {
     if (!updated) throw new NotFoundError("Satış fırsatı");
     return updated;
   },
+
+  async getBillingMilestones(
+    tenantId: string,
+    id: string,
+  ): Promise<SalesBillingMilestone[]> {
+    await this.get(tenantId, id); // yoksa 404
+    return salesBillingMilestoneRepository.findByOpportunity(tenantId, id);
+  },
+
+  /** Milestone listesini TAMAMEN değiştirir (bkz. sales-billing-milestone.repository.ts).
+   * Boş liste geçerlidir (henüz planlanmadı) — SADECE dolu bir liste toplam
+   * kontrolüne tabidir; WON'a kapatmadan önce en az bir tane ZORUNLU olması
+   * ayrı bir kontrol (bkz. close()). */
+  async setBillingMilestones(
+    tenantId: string,
+    id: string,
+    input: SetBillingMilestonesInput,
+  ): Promise<SalesBillingMilestone[]> {
+    const opportunity = await this.get(tenantId, id); // yoksa 404
+    assertNotClosed(opportunity);
+
+    if (input.milestones.length > 0) {
+      assertMilestonesSumMatches(opportunity, input.milestones);
+    }
+
+    return salesBillingMilestoneRepository.replaceAll(tenantId, id, input);
+  },
 };
 
 function assertNotClosed(opportunity: SalesOpportunity): void {
@@ -109,6 +157,34 @@ function assertClosed(opportunity: SalesOpportunity): void {
       "SALES_OPPORTUNITY_NOT_CLOSED",
       "Bu işlem yalnızca kapatılmış (Kazanıldı/Kaybedildi) fırsatlar için yapılabilir.",
       409,
+    );
+  }
+}
+
+function assertHasBillingMilestones(milestones: SalesBillingMilestone[]): void {
+  if (milestones.length === 0) {
+    throw new AppError(
+      "SALES_OPPORTUNITY_MISSING_BILLING_MILESTONES",
+      "Kazanıldı (WON) olarak kapatmadan önce en az bir hakediş faturalama tarihi eklenmelidir.",
+      409,
+    );
+  }
+}
+
+/** Milestone tutarları toplamı fırsatın expectedValue'suna (±1 kuruş
+ * tolerans) eşit olmalı — hem kayıt anında (dolu bir liste için) hem de
+ * WON'a kapatırken (expectedValue milestone'lardan SONRA değişmiş olabilir,
+ * bkz. update() — bu yüzden kapatırken TEKRAR kontrol edilir). */
+function assertMilestonesSumMatches(
+  opportunity: SalesOpportunity,
+  milestones: { amount: number }[],
+): void {
+  const total = roundMoney(milestones.reduce((sum, m) => sum + m.amount, 0));
+  if (Math.abs(total - opportunity.expectedValue) > BILLING_MILESTONE_SUM_TOLERANCE) {
+    throw new AppError(
+      "SALES_BILLING_MILESTONES_SUM_MISMATCH",
+      `Hakediş tutarları toplamı (${total}) fırsatın beklenen tutarıyla (${opportunity.expectedValue}) eşleşmiyor.`,
+      422,
     );
   }
 }

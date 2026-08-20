@@ -8,7 +8,6 @@ export type {
   BudgetLineInput,
   BudgetSheet,
 } from "./budget-line";
-export type { CashFlowMonthRow, CashFlowReport } from "./cash-flow";
 export type {
   ConsolidationMissingOrg,
   ConsolidationOrgBreakdown,
@@ -75,13 +74,23 @@ export type {
   CreateSalesOpportunityInput,
   SalesActualsPreview,
   SalesActualsPreviewBreakdown,
+  SalesBillingMilestone,
   SalesOpportunity,
   SalesOpportunityStage,
   SalesPipelineForecastBreakdown,
   SalesPipelineForecastPreview,
   SalesStageConfigEntry,
+  SetBillingMilestonesInput,
   UpdateSalesOpportunityInput,
 } from "./sales";
 export { OPEN_SALES_STAGES } from "./sales";
+export type {
+  CashFlowDirection,
+  CashFlowEvent,
+  CashFlowEventSource,
+  CashFlowEventStatus,
+  CreateCashFlowEventInput,
+  UpdateCashFlowEventInput,
+} from "./treasury";
 export type { Membership, Role, User } from "./user";
 export type { VarianceReport, VarianceRow, VarianceStatus } from "./variance";

@@ -10,6 +10,7 @@ import type {
   SalesPipelineForecastPreview,
 } from "@/shared/types";
 
+import { salesBillingMilestoneRepository } from "./sales-billing-milestone.repository";
 import {
   loadSalesStageConfigMap,
   resolveWinProbability,
@@ -33,9 +34,16 @@ import { salesOpportunityRepository } from "./sales-opportunity.repository";
  * Aynı senaryoya işaret edilirse ikinci commit birincinin tutarlarını siler.
  * Bu uyarı frontend'de SalesActualsPostPanel/SalesPipelineForecastPostPanel'in
  * ipucu metninde de tekrarlanır.
+ *
+ * `previewActuals`: WON fırsatın TAM tutarı ARTIK tek başına `closedAt`
+ * ayına DEĞİL, `SalesBillingMilestone` (hakediş faturalama) kayıtlarına göre
+ * BİRDEN ÇOK aya bölünerek yazılır — bkz. sales-opportunity.service.ts'teki
+ * close() notu: WON'a kapatmadan önce en az bir milestone ZORUNLUDUR ve
+ * toplamları expectedValue'ya eşit olmalıdır, bu yüzden burada güvenle
+ * "milestone yoksa katkısı yok" varsayılabilir (eski/test verisi hariç).
  */
 
-// export edilir — ileride cash-flow.service.ts gibi başka modüller AYNI
+// export edilir — ileride treasury modülü gibi başka modüller AYNI
 // kategori id'sini tek kaynaktan kullanmak isteyebilir (bkz. DEPRECIATION_CATEGORY_ID).
 export const SALES_CATEGORY_ID = "cat-gelir";
 
@@ -53,22 +61,34 @@ export const salesForecastService = {
     const totalsByMonth = new Map<number, number>();
 
     for (const opportunity of wonOpportunities) {
-      if (!opportunity.closedAt) continue;
-      const closed = new Date(opportunity.closedAt);
-      if (closed.getUTCFullYear() !== scenario.fiscalYear) continue;
+      const milestones = await salesBillingMilestoneRepository.findByOpportunity(
+        context.tenantId,
+        opportunity.id,
+      );
+      const milestonesThisYear = milestones.filter(
+        (m) => new Date(m.billingDate).getUTCFullYear() === scenario.fiscalYear,
+      );
+      // Eski/eksik hakediş kaydı olan WON fırsat (bu özellikten ÖNCEKİ demo/
+      // test verisi) — depreciation.service.ts'teki "bu yıla düşen kaydı
+      // olmayan varlık atlanır" disipliniyle AYNI: hata FIRLATILMAZ, katkısı
+      // olmaz.
+      if (milestonesThisYear.length === 0) continue;
 
-      const month = closed.getUTCMonth() + 1;
-      const amount = roundMoney(opportunity.expectedValue);
+      for (const milestone of milestonesThisYear) {
+        const month = new Date(milestone.billingDate).getUTCMonth() + 1;
+        const amount = roundMoney(milestone.amount);
 
-      opportunities.push({
-        opportunityId: opportunity.id,
-        customerName: opportunity.customerName,
-        dealName: opportunity.dealName,
-        month,
-        amount,
-      });
+        opportunities.push({
+          opportunityId: opportunity.id,
+          customerName: opportunity.customerName,
+          dealName: opportunity.dealName,
+          billingDate: milestone.billingDate,
+          month,
+          amount,
+        });
 
-      totalsByMonth.set(month, roundMoney((totalsByMonth.get(month) ?? 0) + amount));
+        totalsByMonth.set(month, roundMoney((totalsByMonth.get(month) ?? 0) + amount));
+      }
     }
 
     const monthlyTotals = [...totalsByMonth.entries()]

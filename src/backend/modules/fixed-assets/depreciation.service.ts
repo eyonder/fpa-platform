@@ -24,8 +24,8 @@ import { loadVukConfigMap, resolveDepreciationParams } from "./fixed-asset.servi
  * DEPRECIATION) yazar; kilit kontrolü ve audit kaydı oradan otomatik gelir.
  */
 
-// export edilir — cash-flow.service.ts amortismanı P&L'den geri eklerken
-// (nakit çıkışı DEĞİL) AYNI kategori id'sini tek kaynaktan kullanır.
+// export edilir — commitForScenario dahil, bu kategoriye yazan/okuyan HER
+// çağıran AYNI kategori id'sini tek kaynaktan kullanır.
 export const DEPRECIATION_CATEGORY_ID = "cat-amortisman";
 
 export const depreciationService = {

@@ -61,3 +61,19 @@ export const salesForecastScenarioSchema = z.object({
 });
 
 export type SalesForecastScenarioInput = z.infer<typeof salesForecastScenarioSchema>;
+
+const billingMilestoneSchema = z.object({
+  billingDate: dateSchema,
+  amount: z.number().positive("Tutar 0'dan büyük olmalı."),
+});
+
+// Toplamın fırsatın expectedValue'suna eşit olması burada DEĞİL, servis
+// katmanında doğrulanır (bkz. sales-opportunity.service.ts#assertMilestonesSumMatches)
+// — hedef bu fırsata özgü, DB'den okunan bir değer, Zod `.refine()` ile ifade
+// EDİLEMEZ. `.min(1)` YOK: boş liste WON'a kapatılana kadar geçerli bir
+// "henüz planlanmadı" durumudur (bkz. close()).
+export const setBillingMilestonesSchema = z.object({
+  milestones: z.array(billingMilestoneSchema),
+});
+
+export type SetBillingMilestonesInput = z.infer<typeof setBillingMilestonesSchema>;

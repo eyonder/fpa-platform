@@ -7,7 +7,6 @@ import { StatTile } from "@/frontend/components/charts/StatTile";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Card } from "@/frontend/components/ui/Card";
 import { useBudgetLines } from "@/frontend/hooks/useBudgetLines";
-import { useCashFlowReport } from "@/frontend/hooks/useCashFlowReport";
 import { useScenarios } from "@/frontend/hooks/useScenarios";
 import { useVarianceReport } from "@/frontend/hooks/useVarianceReport";
 import { formatAmount } from "@/frontend/lib/format";
@@ -63,14 +62,6 @@ export function ReportScreen() {
   const { state } = useVarianceReport({
     budgetScenarioId: budgetScenarioId || null,
     actualScenarioId: actualScenarioId || null,
-    periodStart,
-    periodEnd,
-  });
-
-  // Nakit Akış, Sapma raporuyla AYNI Kapsam seçimlerini (bütçe senaryosu +
-  // dönem) kullanır — ayrı bir senaryo/dönem seçici EKLEMEZ.
-  const { state: cashFlowState } = useCashFlowReport({
-    scenarioId: budgetScenarioId || null,
     periodStart,
     periodEnd,
   });
@@ -277,112 +268,6 @@ export function ReportScreen() {
                 </tbody>
               </table>
             </div>
-          </Card>
-
-          <Card
-            title="Nakit Akış"
-            hint="Amortisman + Sabit Kıymet Alımı ile tahakkuktan nakde geçiş"
-          >
-            <p className="mb-4 text-xs text-muted">
-              Amortisman nakit çıkışı değildir, geri eklenir; sabit kıymet alım tutarı
-              ise P&amp;L&apos;de görünmeyen gerçek bir nakit çıkışıdır. Tahsilat/ödeme
-              vadesi varsayılmaz — diğer tüm kalemlerin aynı ay içinde nakde dönüştüğü
-              kabul edilir.
-            </p>
-
-            {cashFlowState.status === "loading" ? (
-              <p className="py-6 text-sm text-muted">Nakit akış hesaplanıyor…</p>
-            ) : null}
-            {cashFlowState.status === "error" ? (
-              <p className="py-6 text-sm text-brick">{cashFlowState.message}</p>
-            ) : null}
-
-            {cashFlowState.status === "ready" ? (
-              <>
-                <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-3">
-                  <StatTile
-                    label="Net Bütçe (Tahakkuk)"
-                    value={formatAmount(
-                      cashFlowState.report.totals.netBudget,
-                      cashFlowState.report.currency,
-                    )}
-                  />
-                  <StatTile
-                    label="Net Nakit Akışı"
-                    value={formatAmount(
-                      cashFlowState.report.totals.netCashFlow,
-                      cashFlowState.report.currency,
-                    )}
-                  />
-                  <StatTile
-                    label="Fark (Amortisman − Sabit Kıymet Alımı)"
-                    value={formatAmount(
-                      cashFlowState.report.totals.netCashFlow -
-                        cashFlowState.report.totals.netBudget,
-                      cashFlowState.report.currency,
-                    )}
-                  />
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-rule text-left text-xs tracking-wide text-muted uppercase">
-                        <th className="pb-2 font-medium">Ay</th>
-                        <th className="pb-2 text-right font-medium">Net Bütçe</th>
-                        <th className="pb-2 text-right font-medium">+ Amortisman</th>
-                        <th className="pb-2 text-right font-medium">
-                          − Sabit Kıymet Alımı
-                        </th>
-                        <th className="pb-2 text-right font-medium">Net Nakit Akışı</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cashFlowState.report.months.map((row) => (
-                        <tr
-                          key={row.month}
-                          className="border-b border-rule/60 last:border-0"
-                        >
-                          <td className="py-3 font-medium">
-                            {MONTHS.find((m) => m.month === row.month)?.label ??
-                              row.month}
-                          </td>
-                          <td className="tabular py-3 text-right">
-                            {formatAmount(row.netBudget)}
-                          </td>
-                          <td className="tabular py-3 text-right">
-                            {formatAmount(row.depreciationAddBack)}
-                          </td>
-                          <td className="tabular py-3 text-right">
-                            {formatAmount(row.capexOutflow)}
-                          </td>
-                          <td className="tabular py-3 text-right font-medium">
-                            {formatAmount(row.netCashFlow)}
-                          </td>
-                        </tr>
-                      ))}
-                      <tr className="border-t-2 border-ink font-medium">
-                        <td className="py-3">TOPLAM</td>
-                        <td className="tabular py-3 text-right">
-                          {formatAmount(cashFlowState.report.totals.netBudget)}
-                        </td>
-                        <td className="tabular py-3 text-right">
-                          {formatAmount(
-                            cashFlowState.report.totals.depreciationAddBack,
-                          )}
-                        </td>
-                        <td className="tabular py-3 text-right">
-                          {formatAmount(cashFlowState.report.totals.capexOutflow)}
-                        </td>
-                        <td className="tabular py-3 text-right">
-                          {formatAmount(cashFlowState.report.totals.netCashFlow)}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            ) : null}
           </Card>
         </>
       ) : null}

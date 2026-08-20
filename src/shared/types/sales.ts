@@ -56,10 +56,22 @@ export interface SalesStageConfigEntry {
   defaultWinProbability: number;
 }
 
+export interface SalesBillingMilestone {
+  /** YYYY-MM-DD */
+  billingDate: string;
+  amount: number;
+}
+
+export interface SetBillingMilestonesInput {
+  milestones: SalesBillingMilestone[];
+}
+
 export interface SalesActualsPreviewBreakdown {
   opportunityId: string;
   customerName: string;
   dealName: string;
+  /** YYYY-MM-DD — bu satırın kaynaklandığı hakediş faturalama tarihi. */
+  billingDate: string;
   month: number;
   amount: number;
 }

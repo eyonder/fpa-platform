@@ -39,20 +39,25 @@ model Tenant {
   parent   Tenant?  @relation("TenantHierarchy", fields: [parentTenantId], references: [id])
   children Tenant[] @relation("TenantHierarchy")
 
-  memberships           Membership[]
-  scenarios             Scenario[]
-  budgetLines           BudgetLine[]
-  auditLogs             AuditLog[]
-  importJobs            ImportJob[]
-  sessions              Session[]
-  employees             Employee[]
-  employeeCompensations EmployeeCompensation[]
-  costCenters           CostCenter[]
-  allocationKeys        AllocationKey[]
-  allocationKeyMembers  AllocationKeyMember[]
-  expenseEntries        ExpenseEntry[]
-  fixedAssets           FixedAsset[]
-  salesOpportunities    SalesOpportunity[]
+  memberships            Membership[]
+  scenarios              Scenario[]
+  budgetLines            BudgetLine[]
+  auditLogs              AuditLog[]
+  importJobs             ImportJob[]
+  sessions               Session[]
+  employees              Employee[]
+  employeeCompensations  EmployeeCompensation[]
+  costCenters            CostCenter[]
+  allocationKeys         AllocationKey[]
+  allocationKeyMembers   AllocationKeyMember[]
+  expenseEntries         ExpenseEntry[]
+  fixedAssets            FixedAsset[]
+  salesOpportunities     SalesOpportunity[]
+  salesBillingMilestones SalesBillingMilestone[]
+  cashFlowEvents         CashFlowEvent[]
+  mappingConfigs         MappingConfig[]
+  bankBalances           BankBalance[]
+  bankTransactions       BankTransaction[]
 
   @@index([parentTenantId])
 }
@@ -185,6 +190,11 @@ model Scenario {
   importJobs     ImportJob[]
   expenseEntries ExpenseEntry[]
 
+  // Treasury: bir Scenario iki farklı ilişkiyle CashFlowEvent'e bağlanabilir
+  // (nakit tarafı VE yumuşak tahakkuk referansı) — bkz. 14. bölüm notu.
+  cashFlowEvents        CashFlowEvent[] @relation("TreasuryEventScenario")
+  accrualCashFlowEvents CashFlowEvent[] @relation("TreasuryEventAccrualScenario")
+
   @@index([tenantId, name])
 }
 
@@ -206,6 +216,8 @@ model BudgetCategory {
   budgetLines    BudgetLine[]
   auditLogs      AuditLog[]
   expenseEntries ExpenseEntry[]
+  cashFlowEvents CashFlowEvent[]
+  mappingConfigs MappingConfig[]
 }
 
 // ----------------------------------------------------
@@ -627,7 +639,7 @@ model FixedAsset {
 
   assetName       String
   category        FixedAssetCategory
-  acquisitionDate DateTime @db.Date
+  acquisitionDate DateTime           @db.Date
   baseValueMinor  BigInt
 
   // SADECE LEASEHOLD_IMPROVEMENTS için anlamlıdır — diğer beş kategorinin
@@ -720,9 +732,212 @@ model SalesOpportunity {
   createdAt DateTime
   updatedAt DateTime @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant            Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  billingMilestones SalesBillingMilestone[]
 
   @@index([tenantId, stage])
   @@index([tenantId, expectedCloseDate])
   @@index([tenantId, closedAt])
+}
+
+// Bir WON fırsatın "hakediş faturalama tarihleri" (progress/milestone billing
+// takvimi). AllocationKeyMember İLE AYNI desen: kendi (denormalize) tenantId
+// kolonu var (RLS + index için, parent ilişkisinden bağımsız); tutarlar
+// toplamda fırsatın expectedValue'suna eşit olmalı — DB constraint YOK,
+// AllocationKeyMember'ın sabit %100 hedefinin AKSİNE bu fırsata özgü
+// (DB'den okunan) bir hedef olduğu için Zod `.refine()` ile ifade EDİLEMEZ,
+// servis katmanında doğrulanır (bkz. sales-opportunity.service.ts). En az
+// bir milestone olmadan bir fırsat WON'a kapatılamaz (bkz. close()).
+model SalesBillingMilestone {
+  id                 String @id
+  tenantId           String
+  salesOpportunityId String
+
+  billingDate DateTime @db.Date
+  amountMinor BigInt
+
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  salesOpportunity SalesOpportunity @relation(fields: [salesOpportunityId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([salesOpportunityId])
+}
+
+// ----------------------------------------------------
+// 14. Hazine (Treasury) — günlük hassasiyetli nakit defteri (RLS'li, Faz 4.1)
+//
+// BudgetLine'dan BAĞIMSIZ bir defterdir. BudgetLine ay bazlı ve TAHAKKUK
+// (accrual) mantığındadır; CashFlowEvent gün bazlı ve NAKİT (cash)
+// mantığındadır. İkisi arasında YUMUŞAK bir referans vardır
+// (accrualScenarioId + accrualStartMonth), FK YOKTUR — işaret edilen
+// BudgetLine satırı hiç var olmayabilir, bu geçerlidir. Bu KASITLI bir
+// mimari karar: BudgetLine altı modülün (Payroll/FixedAsset/Sales/Import/
+// Expense) tek yazma noktasıdır (budgetLineService.bulkUpsert) — Treasury
+// ona HİÇ dokunmaz, ayrı bir defter olarak yaşar.
+// ----------------------------------------------------
+
+enum CashFlowDirection {
+  INFLOW // tahsilat
+  OUTFLOW // ödeme
+}
+
+enum CashFlowEventStatus {
+  PLANNED // projeksiyona dahil
+  NEUTRALIZED // gerçek banka hareketiyle eşleşti — projeksiyondan DÜŞÜLÜR
+  CANCELLED // iptal — hiçbir hesaba katılmaz
+}
+
+enum CashFlowEventSource {
+  MANUAL // elle giriş / grid içi düzenleme / Excel'den yapıştırma
+  THP_IMPORT // Tek Düzen Hesap Planı Excel içe aktarımı (Faz 4.2)
+}
+
+// THP hesabının hangi katmana ait olduğu. 120/320 gibi BİLANÇO hesapları
+// gerçek vade taşır -> nakit olayı üretir. 600/770 gibi GELİR TABLOSU
+// hesapları tahakkuktur -> nakit olayı ÜRETMEZ (üretirse çift sayılır).
+// Faz 4.1'de şemaya EKLENDİ ama Faz 4.2'ye kadar tüketilmedi — bilinçli:
+// sonradan eklemek geri dönük veri düzeltmesi (backfill) gerektirirdi.
+enum MappingLayer {
+  CASH
+  ACCRUAL
+}
+
+model CashFlowEvent {
+  id         String @id
+  tenantId   String
+  scenarioId String
+
+  // --- NAKİT KATMANI (gün hassasiyeti) ---
+  dueDate     DateTime          @db.Date // paranın bankaya girdiği/çıktığı gün
+  direction   CashFlowDirection
+  amountMinor BigInt // HER ZAMAN pozitif; işareti direction taşır
+
+  status CashFlowEventStatus @default(PLANNED)
+  source CashFlowEventSource @default(MANUAL)
+
+  // --- TAHAKKUK KATMANI (BudgetLine'a YUMUŞAK referans, FK YOK) ---
+  // accrualScenarioId genelde scenarioId ile aynıdır ama 90 günlük pencere
+  // mali yıl sınırını aşabildiği için AYRI bir alandır (bir sonraki yılın
+  // senaryosuna işaret edebilir).
+  accrualScenarioId   String?
+  accrualStartMonth   Int? // 1..12
+  accrualSpreadMonths Int     @default(1) // 12 = yıla yayılan hizmet bedeli
+
+  categoryId String // BudgetCategory (GLOBAL tablo, RLS yok)
+
+  counterparty String?
+  description  String?
+
+  // Provenance (Faz 4.2'de dolar)
+  thpAccountCode  String?
+  mappingConfigId String?
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scenario        Scenario       @relation("TreasuryEventScenario", fields: [scenarioId], references: [id], onDelete: Cascade)
+  accrualScenario Scenario?      @relation("TreasuryEventAccrualScenario", fields: [accrualScenarioId], references: [id], onDelete: SetNull)
+  category        BudgetCategory @relation(fields: [categoryId], references: [id])
+  mappingConfig   MappingConfig? @relation(fields: [mappingConfigId], references: [id], onDelete: SetNull)
+
+  // Ters ilişki — FK BankTransaction tarafındadır (bkz. o modeldeki not).
+  matchedTransaction BankTransaction?
+
+  @@index([tenantId])
+  @@index([scenarioId, dueDate]) // projeksiyonun sıcak yolu
+  @@index([scenarioId, status])
+  @@index([categoryId])
+  @@index([mappingConfigId])
+}
+
+// THP (Tek Düzen Hesap Planı) kodu -> BudgetCategory eşleştirme kuralı.
+// TENANT'A ÖZELDİR (RLS'li), BudgetCategory gibi global DEĞİLDİR: THP bir
+// ulusal standart ama alt hesap kullanımı (120.01.xxx) şirkete özeldir ve
+// hangi kategoriye eşleneceği şirket politikasıdır — global olsaydı bir
+// tenant'ın hesap planı diğerine sızardı (gerçek bir izolasyon kusuru).
+model MappingConfig {
+  id       String @id
+  tenantId String
+
+  accountCode String // "120", "320.01", "770" — ÖNEK olarak eşleşir (en uzun önek kazanır)
+  accountName String // insan okunur etiket ("Alıcılar")
+
+  categoryId String
+  direction  CashFlowDirection
+  layer      MappingLayer      @default(CASH)
+
+  // Excel'de "Vade Tarihi" boşsa: belge tarihi + defaultTermDays.
+  // null ise vadesiz kabul edilir ve satır "eksik vade" olarak raporlanır.
+  defaultTermDays Int?
+
+  isActive Boolean @default(true)
+  note     String?
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category       BudgetCategory  @relation(fields: [categoryId], references: [id])
+  cashFlowEvents CashFlowEvent[]
+
+  @@unique([tenantId, accountCode])
+  @@index([tenantId])
+  @@index([categoryId])
+}
+
+// "Top Bakiye" — elle girilen banka bakiye fotoğrafı. MVP: TEK hesap,
+// TEK para birimi (tenant.baseCurrency) — bkz. plan'daki kapsam notu.
+model BankBalance {
+  id       String @id
+  tenantId String
+
+  asOfDate     DateTime @db.Date
+  balanceMinor BigInt // NEGATİF OLABİLİR (kredili mevduat)
+  note         String?
+
+  recordedByUserId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, asOfDate]) // günde tek fotoğraf — upsert edilir
+  @@index([tenantId])
+}
+
+// Gerçekleşen banka hareketi (elle veya Excel ile — Faz 4.3).
+model BankTransaction {
+  id       String @id
+  tenantId String
+
+  valueDate   DateTime          @db.Date // valör
+  direction   CashFlowDirection
+  amountMinor BigInt // HER ZAMAN pozitif
+
+  description  String
+  counterparty String?
+  externalRef  String? // banka referans no — mükerrer içe aktarımı engeller
+
+  // --- MUTABAKAT (RECONCILIATION) ---
+  // FK TEK YÖNLÜDÜR ve BURADADIR. CashFlowEvent karşı ilişkiyi Prisma'dan
+  // bedavaya alır. @unique = bir tahmin en fazla BİR banka hareketiyle
+  // eşleşebilir (1:1). Kısmi/bölünmüş eşleşme MVP dışıdır.
+  matchedEventId  String?   @unique
+  matchedAt       DateTime?
+  matchedByUserId String?
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  matchedEvent CashFlowEvent? @relation(fields: [matchedEventId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, externalRef])
+  @@index([tenantId])
+  @@index([tenantId, valueDate])
+  @@index([tenantId, matchedEventId])
 }
