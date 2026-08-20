@@ -71,5 +71,17 @@ export type {
   PayrollRunPreview,
 } from "./personnel";
 export type { Scenario, ScenarioKind } from "./scenario";
+export type {
+  CreateSalesOpportunityInput,
+  SalesActualsPreview,
+  SalesActualsPreviewBreakdown,
+  SalesOpportunity,
+  SalesOpportunityStage,
+  SalesPipelineForecastBreakdown,
+  SalesPipelineForecastPreview,
+  SalesStageConfigEntry,
+  UpdateSalesOpportunityInput,
+} from "./sales";
+export { OPEN_SALES_STAGES } from "./sales";
 export type { Membership, Role, User } from "./user";
 export type { VarianceReport, VarianceRow, VarianceStatus } from "./variance";

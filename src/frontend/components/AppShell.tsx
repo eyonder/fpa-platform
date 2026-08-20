@@ -11,6 +11,7 @@ const NAV = [
   { href: "/butce-girisi", label: "Bütçe Girişi" },
   { href: "/gider-merkezleri", label: "Gider Merkezleri" },
   { href: "/sabit-kiymetler", label: "Sabit Kıymetler" },
+  { href: "/satis", label: "Satış" },
   { href: "/ice-aktarma", label: "İçe Aktarma" },
   { href: "/denetim-kaydi", label: "Denetim Kaydı" },
   { href: "/hesap", label: "Hesap" },

@@ -52,6 +52,7 @@ model Tenant {
   allocationKeyMembers  AllocationKeyMember[]
   expenseEntries        ExpenseEntry[]
   fixedAssets           FixedAsset[]
+  salesOpportunities    SalesOpportunity[]
 
   @@index([parentTenantId])
 }
@@ -250,6 +251,7 @@ enum AuditSource {
   PAYROLL
   EXPENSE
   DEPRECIATION
+  SALES
 }
 
 model AuditLog {
@@ -658,4 +660,69 @@ model FixedAsset {
 
   @@index([tenantId, status])
   @@index([tenantId, category])
+}
+
+// ----------------------------------------------------
+// 13. Satış Fırsatları (Sales Pipeline) — RLS'li (Faz 3.1)
+// ----------------------------------------------------
+// FixedAsset'in AKSİNE: burada bir onay akışı durum makinesi YOK — canlı bir
+// CRM kaydı. Tek korumalı geçiş: LEAD/QUALIFIED/PROPOSAL/NEGOTIATION (açık)
+// -> WON/LOST (kapalı), SADECE POST /api/sales-opportunities/:id/close ile
+// (bkz. sales-opportunity.service.ts). İki BAĞIMSIZ bütçeye yazma yolu var
+// (sales-forecast.service.ts): WON'ların closedAt ayına TAM expectedValue'su
+// (actuals) ve AÇIK fırsatların expectedCloseDate ayına
+// expectedValue*winProbability'si (pipeline forecast) — HER İKİSİ de
+// budgetLineService.bulkUpsert ile (kaynak: SALES) "Gelir" (cat-gelir)
+// kategorisine yazılır; kilit kontrolü ve audit kaydı oradan otomatik gelir.
+// Kod bu ikisinin FARKLI senaryolara yazılmasını ZORUNLU KILMAZ — bkz.
+// SalesActualsPostPanel/SalesPipelineForecastPostPanel'deki uyarı metni.
+
+enum SalesOpportunityStage {
+  LEAD
+  QUALIFIED
+  PROPOSAL
+  NEGOTIATION
+  WON
+  LOST
+}
+
+// Küresel referans (VukAmortismanConfig ile AYNI desen) — RLS YOK, doğal
+// anahtar: stage. Varsayılan kazanma olasılıkları iş politikasıdır (VUK/SGK
+// gibi yasal zorunluluk DEĞİL) — bkz. seed.ts#seedSalesStageConfig. Her
+// fırsatta winProbabilityOverride ile (HERHANGİ bir aşamada, FixedAsset'in
+// leasehold-only override kısıtının AKSİNE) geçersiz kılınabilir.
+model SalesStageConfig {
+  stage                 SalesOpportunityStage @id
+  defaultWinProbability Decimal               @db.Decimal(6, 4)
+}
+
+// Surrogate id. Onay akışı YOK (bkz. dosya başı notu) — closedAt/closedBy*
+// SADECE `close` uç noktasından set edilir.
+model SalesOpportunity {
+  id       String @id
+  tenantId String
+
+  customerName       String
+  dealName           String
+  expectedValueMinor BigInt
+  expectedCloseDate  DateTime              @db.Date
+  stage              SalesOpportunityStage @default(LEAD)
+
+  // Herhangi bir aşamada geçerlidir (bkz. dosya başı notu).
+  winProbabilityOverride Decimal? @db.Decimal(6, 4)
+
+  // NULL = açık. Dolu = WON ya da LOST'a kapatılmış, GERÇEK kapanış ayı
+  // (expectedCloseDate'ten BAĞIMSIZ) — actuals commit bunu kullanır.
+  closedAt         DateTime? @db.Date
+  closedByUserId   String?
+  closedByUserName String?
+
+  createdAt DateTime
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, stage])
+  @@index([tenantId, expectedCloseDate])
+  @@index([tenantId, closedAt])
 }

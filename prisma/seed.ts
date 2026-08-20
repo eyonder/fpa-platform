@@ -90,6 +90,7 @@ async function resetDatabase() {
   await prisma.allocationKey.deleteMany();
   await prisma.costCenter.deleteMany();
   await prisma.fixedAsset.deleteMany();
+  await prisma.salesOpportunity.deleteMany();
   await prisma.scenario.deleteMany();
   await prisma.employee.deleteMany();
   await prisma.membership.deleteMany();
@@ -101,6 +102,7 @@ async function resetDatabase() {
   await prisma.fxRate.deleteMany();
   await prisma.payrollTaxConfig.deleteMany();
   await prisma.vukAmortismanConfig.deleteMany();
+  await prisma.salesStageConfig.deleteMany();
 }
 
 async function seedTenants() {
@@ -592,6 +594,24 @@ async function seedVukAmortismanConfig() {
   });
 }
 
+/**
+ * Aşama -> varsayılan kazanma olasılığı tablosu — İŞ POLİTİKASI (VUK/SGK
+ * gibi yasal zorunluluk DEĞİL), bkz. prisma/schema.prisma'daki SalesStageConfig
+ * yorumu. `seedVukAmortismanConfig`teki AYNI "config veri, kod değil" felsefesi.
+ */
+async function seedSalesStageConfig() {
+  await prisma.salesStageConfig.createMany({
+    data: [
+      { stage: "LEAD", defaultWinProbability: 0.1 },
+      { stage: "QUALIFIED", defaultWinProbability: 0.25 },
+      { stage: "PROPOSAL", defaultWinProbability: 0.5 },
+      { stage: "NEGOTIATION", defaultWinProbability: 0.75 },
+      { stage: "WON", defaultWinProbability: 1.0 },
+      { stage: "LOST", defaultWinProbability: 0.0 },
+    ],
+  });
+}
+
 interface CompensationPayload {
   amountMinor: number;
   mealAllowanceDays: number;
@@ -712,6 +732,7 @@ async function main() {
   await seedFxRates();
   await seedPayrollTaxConfig();
   await seedVukAmortismanConfig();
+  await seedSalesStageConfig();
   await seedPersonnel();
   console.log("Seed tamamlandı.");
 }

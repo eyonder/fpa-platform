@@ -39,7 +39,12 @@ export type Permission =
   /** Taslak sabit kıymet (capex) kaydı oluşturma/düzenleme, onaya gönderme. */
   | "fixed-asset:write"
   /** Onaya gönderilmiş sabit kıymeti onaylama/reddetme, amortismanı bütçeye yazma. */
-  | "fixed-asset:approve";
+  | "fixed-asset:approve"
+  /** Satış fırsatı oluşturma/düzenleme, kapatma (WON/LOST) — rutin CRM veri girişi. */
+  | "sales-opportunity:write"
+  /** Kazanılan (WON) fırsatları (actuals) ya da açık boru hattını (pipeline
+   *  forecast) bütçeye yazma. */
+  | "sales-opportunity:commit";
 
 const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   ADMIN: [
@@ -57,6 +62,8 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "expense-entry:approve",
     "fixed-asset:write",
     "fixed-asset:approve",
+    "sales-opportunity:write",
+    "sales-opportunity:commit",
   ],
   // ÖNEMLİ: payroll:read/payroll:write BİLEREK burada YOK. Maaş verisi
   // gizliliği (bkz. Employee/EmployeeCompensation RLS + şifreleme notu,
@@ -75,18 +82,24 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     "expense-entry:approve",
     "fixed-asset:write",
     "fixed-asset:approve",
+    "sales-opportunity:write",
+    "sales-opportunity:commit",
   ],
   // Veri Giriş Uzmanı: sadece veri girer (elle ya da dosyayla). Senaryo
   // yönetemez, kilit açamaz/kapatamaz, forecast/konsolidasyon çalıştıramaz,
   // denetim kaydını göremez (bu, Bütçe Yöneticisi/Admin'in gözetim aracıdır).
   // expense-entry:approve/fixed-asset:approve BİLEREK YOK — kendi gönderdiği
   // gideri/sabit kıymeti kendisi onaylayamasın diye (bkz. expense-entry.service.ts
-  // ve fixed-asset.service.ts'teki onay akışı notu).
+  // ve fixed-asset.service.ts'teki onay akışı notu). sales-opportunity:write
+  // İSE BİLEREK VAR — diğer modüllerin AKSİNE, satış fırsatı girişi/kapatma
+  // rutin CRM veri girişidir, ayrıcalıklı bir onay adımı değil; yalnızca
+  // bütçeye YAZMA (:commit) ADMIN/BÜTÇE Yöneticisi'ne özel kalır.
   DATA_ENTRY: [
     "budget-line:write",
     "import:run",
     "expense-entry:write",
     "fixed-asset:write",
+    "sales-opportunity:write",
   ],
 };
 
@@ -109,6 +122,8 @@ const PERMISSION_LABELS: Record<Permission, string> = {
   "expense-entry:approve": "gider kaydı onaylama",
   "fixed-asset:write": "sabit kıymet (capex) girişi",
   "fixed-asset:approve": "sabit kıymet onaylama",
+  "sales-opportunity:write": "satış fırsatı girişi",
+  "sales-opportunity:commit": "satış tutarını bütçeye yazma",
 };
 
 const ROLE_LABELS: Record<Role, string> = {
