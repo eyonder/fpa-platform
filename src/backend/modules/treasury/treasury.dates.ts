@@ -48,3 +48,27 @@ export function addDays(dateStr: string, days: number): string {
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
 }
+
+/** Bugünün YYYY-MM-DD hali (UTC). Sunucu saat diliminden bağımsız olması
+ * KASITLI — `@db.Date` alanları da UTC gece yarısı olarak saklanır, ikisinin
+ * aynı takvimi kullanması gerekir. */
+export function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** `to` - `from`, TAM GÜN cinsinden (pozitif = to daha ileride). */
+export function diffDays(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00.000Z`);
+  const b = Date.parse(`${to}T00:00:00.000Z`);
+  return Math.round((b - a) / 86_400_000);
+}
+
+/** [start, start+count) aralığındaki günleri sırayla üretir. */
+export function dateRange(start: string, count: number): string[] {
+  return Array.from({ length: count }, (_, i) => addDays(start, i));
+}
+
+/** `Date` (Prisma `@db.Date`) -> YYYY-MM-DD. */
+export function toIsoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}

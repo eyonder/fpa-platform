@@ -1,6 +1,21 @@
 import ExcelJS from "exceljs";
 
-import { AppError } from "@/backend/core/errors";
+import { AppError } from "./errors";
+
+/**
+ * ORTAK TABLO DOSYASI AYRIŞTIRICISI (CSV / XLSX).
+ *
+ * `modules/imports/import-parser.ts`ten BURAYA TAŞINDI: artık ÜÇ ayrı içe
+ * aktarım akışı aynı ayrıştırıcıyı kullanıyor (Mizan/Muavin bütçe içe
+ * aktarımı, THP nakit içe aktarımı, banka ekstresi içe aktarımı) — "rule of
+ * three". Tek bir modülün altında kalsaydı diğer iki modül `imports/`e
+ * bağımlı olurdu; oysa aralarında İŞ MANTIĞI ortaklığı YOK, sadece dosya
+ * okuma ortaklığı var.
+ *
+ * Bu dosya iş mantığı BİLMEZ — hangi kolonun ne anlama geldiği çağıran
+ * modülün (`import-mapping.ts` / `thp-mapping.ts` / `bank-statement-mapping.ts`)
+ * sorunudur.
+ */
 
 /** Bir dosyanın ham hali: başlık satırı + veri satırları (hepsi metin). */
 export interface ParsedFile {

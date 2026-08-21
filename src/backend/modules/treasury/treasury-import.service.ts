@@ -2,7 +2,7 @@ import { AppError, NotFoundError } from "@/backend/core/errors";
 import { withTenantTransaction } from "@/backend/core/prisma-client";
 import type { RequestContext } from "@/backend/core/tenant";
 import { budgetLineRepository } from "@/backend/modules/budget-lines/budget-line.repository";
-import { parseFile } from "@/backend/modules/imports/import-parser";
+import { parseFile } from "@/backend/core/tabular-file";
 import { scenarioRepository } from "@/backend/modules/scenarios/scenario.repository";
 import type {
   CashFlowEvent,
@@ -243,6 +243,16 @@ async function getOwnedBatch(
 ): Promise<TreasuryImportBatchRecord> {
   const record = await treasuryImportRepository.findById(context.tenantId, batchId);
   if (!record) throw new NotFoundError("İçe aktarma");
+  // Aynı tablo banka ekstresi sihirbazıyla PAYLAŞILIR (bkz.
+  // bank-import.service.ts) — yanlış türdeki bir parti buraya sızarsa
+  // `appliedMapping` şekli uyuşmaz ve önizleme sessizce boşalırdı.
+  if (record.kind !== "THP") {
+    throw new AppError(
+      "TREASURY_IMPORT_KIND_MISMATCH",
+      "Bu içe aktarma bir THP mizanı değil.",
+      409,
+    );
+  }
   return record;
 }
 

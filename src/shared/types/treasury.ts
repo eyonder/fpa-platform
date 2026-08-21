@@ -169,3 +169,209 @@ export interface TreasuryImportBatch {
   createdAt: string;
   updatedAt: string;
 }
+
+// ----------------------------------------------------
+// Banka & Mutabakat (Faz 4.3)
+// ----------------------------------------------------
+
+/** "Top bakiye" — elle girilen banka bakiye fotoğrafı. Projeksiyonun
+ * çıpasıdır (bkz. treasury-balance.service.ts). MVP: TEK hesap, TEK para
+ * birimi (tenant.baseCurrency). */
+export interface BankBalanceSnapshot {
+  id: string;
+  tenantId: string;
+  /** YYYY-MM-DD */
+  asOfDate: string;
+  /** NEGATİF OLABİLİR (kredili mevduat). */
+  balance: number;
+  note: string | null;
+  recordedByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertBankBalanceInput {
+  asOfDate: string;
+  balance: number;
+  note?: string;
+}
+
+/** Gerçekleşen banka hareketi. `CashFlowEvent`in (TAHMİN) karşısındaki
+ * GERÇEK taraftır — mutabakat ikisini eşleştirir. */
+export interface BankTransactionEntry {
+  id: string;
+  tenantId: string;
+  /** YYYY-MM-DD (valör) */
+  valueDate: string;
+  direction: CashFlowDirection;
+  /** HER ZAMAN pozitif; işareti direction taşır. */
+  amount: number;
+  description: string;
+  counterparty: string | null;
+  /** Banka referans no — mükerrer içe aktarımı engeller (tenant içinde tekil). */
+  externalRef: string | null;
+
+  matchedEventId: string | null;
+  matchedAt: string | null;
+  matchedByUserId: string | null;
+
+  treasuryImportBatchId: string | null;
+  createdByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateBankTransactionInput {
+  valueDate: string;
+  direction: CashFlowDirection;
+  amount: number;
+  description: string;
+  counterparty?: string;
+  externalRef?: string;
+}
+
+/** Ham puan (0-100) yerine UI'da BAND gösterilir — ham sayı sahte hassasiyet
+ * hissi verir ve kullanıcıyı düşünmeden onaylamaya iter. */
+export type MatchConfidence = "HIGH" | "MEDIUM" | "LOW";
+
+export interface MatchCandidate {
+  eventId: string;
+  score: number;
+  confidence: MatchConfidence;
+  /** işlem tutarı - tahmin tutarı (pozitif = banka daha yüksek). */
+  amountDelta: number;
+  /** valör - vade, GÜN cinsinden (pozitif = geç ödendi). */
+  dayDelta: number;
+  reasons: string[];
+  /** Onay ekranında tahmini göstermek için özet — ayrı bir istek gerekmesin. */
+  event: {
+    dueDate: string;
+    direction: CashFlowDirection;
+    amount: number;
+    categoryId: string;
+    counterparty: string | null;
+    description: string | null;
+  };
+}
+
+export interface TransactionSuggestion {
+  bankTransactionId: string;
+  transaction: BankTransactionEntry;
+  /** En iyi 3 aday. BOŞ ise "promote" (deftere ekle) önerilir. */
+  candidates: MatchCandidate[];
+}
+
+export interface ReconciliationSuggestions {
+  scenarioId: string;
+  dateWindowDays: number;
+  amountTolerancePct: number;
+  suggestions: TransactionSuggestion[];
+}
+
+export interface ConfirmMatchPair {
+  bankTransactionId: string;
+  cashFlowEventId: string;
+}
+
+// ----------------------------------------------------
+// Nakit pozisyonu (Faz 4.3 — §3.2 formülü)
+// ----------------------------------------------------
+
+export interface TreasuryPositionDay {
+  /** YYYY-MM-DD */
+  date: string;
+  /** O güne ait GERÇEKLEŞEN banka hareketlerinin neti (işaretli). */
+  bankActualNet: number;
+  /** O güne ait PLANLANAN (henüz nötrlenmemiş) olayların neti (işaretli). */
+  plannedNet: number;
+  /** Gün sonu kümülatif bakiye. */
+  closingBalance: number;
+}
+
+/** Vadesi geçmiş ama hâlâ eşleşmemiş tahminler. SESSİZCE DÜŞÜLMEZ —
+ * düşülürse tahmin sinsice iyimserleşir (bkz. plan §3.2 kural 3). */
+export interface UnreconciledOverdue {
+  count: number;
+  inflowTotal: number;
+  outflowTotal: number;
+}
+
+export interface TreasuryPosition {
+  scenarioId: string;
+  startDate: string;
+  endDate: string;
+  /** Bakiyenin dayandığı top bakiye kaydı; YOKSA null ve opening 0 kabul edilir. */
+  anchor: { asOfDate: string; balance: number } | null;
+  openingBalance: number;
+  days: TreasuryPositionDay[];
+  unreconciledOverdue: UnreconciledOverdue;
+  /** Bakiyenin İLK kez negatife düştüğü gün — yoksa null. */
+  firstNegativeDate: string | null;
+}
+
+// ----------------------------------------------------
+// Banka ekstresi içe aktarımı (Faz 4.3)
+// ----------------------------------------------------
+
+export type BankTargetField =
+  | "valueDate"
+  | "description"
+  | "counterparty"
+  | "amount"
+  | "debit"
+  | "credit"
+  | "externalRef"
+  | "skip";
+
+export interface BankColumnMapping {
+  sourceColumn: string;
+  targetField: BankTargetField;
+}
+
+export type BankRowIssueCode =
+  | "MISSING_COLUMNS"
+  | "MISSING_VALUE_DATE"
+  | "INVALID_AMOUNT"
+  | "MISSING_DESCRIPTION"
+  | "DUPLICATE_REF";
+
+export interface BankRowIssue {
+  rowNumber: number;
+  code: BankRowIssueCode;
+  message: string;
+}
+
+export interface BankPreviewRow {
+  rowNumber: number;
+  valueDate: string | null;
+  /** HER ZAMAN pozitif (abs). */
+  amount: number | null;
+  /** Borç/Alacak kolonlarından ya da tek tutar kolonunun İŞARETİNDEN gelir. */
+  direction: CashFlowDirection | null;
+  description: string | null;
+  counterparty: string | null;
+  externalRef: string | null;
+  /** DB'de aynı externalRef zaten varsa true — commit'te atlanır. */
+  isDuplicate: boolean;
+  raw: Record<string, string>;
+}
+
+export interface BankImportBatch {
+  id: string;
+  tenantId: string;
+  scenarioId: string;
+  fileName: string;
+  status: TreasuryImportStatus;
+  kind: TreasuryImportKind;
+  detectedColumns: string[];
+  suggestedMapping: BankColumnMapping[];
+  appliedMapping: BankColumnMapping[];
+  rows: BankPreviewRow[];
+  issues: BankRowIssue[];
+  rowCount: number;
+  mappedCount: number;
+  skippedCount: number;
+  createdByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}

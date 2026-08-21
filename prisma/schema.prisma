@@ -934,17 +934,24 @@ model BankTransaction {
   matchedAt       DateTime?
   matchedByUserId String?
 
+  // Banka ekstresi içe aktarımından geldiyse dolar (Faz 4.3). AYNI
+  // `TreasuryImportBatch` modeli paylaşılır — `kind = BANK_STATEMENT` ile
+  // ayrışır (bkz. o modeldeki not). Elle girilen hareketlerde null.
+  treasuryImportBatchId String?
+
   createdByUserId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  matchedEvent CashFlowEvent? @relation(fields: [matchedEventId], references: [id], onDelete: SetNull)
+  tenant         Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  matchedEvent   CashFlowEvent?       @relation(fields: [matchedEventId], references: [id], onDelete: SetNull)
+  treasuryImport TreasuryImportBatch? @relation(fields: [treasuryImportBatchId], references: [id], onDelete: SetNull)
 
   @@unique([tenantId, externalRef])
   @@index([tenantId])
   @@index([tenantId, valueDate])
   @@index([tenantId, matchedEventId])
+  @@index([treasuryImportBatchId])
 }
 
 // THP (Tek Düzen Hesap Planı) Excel içe aktarım sihirbazı (Faz 4.2) —
@@ -978,9 +985,10 @@ model TreasuryImportBatch {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  scenario Scenario        @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
-  events   CashFlowEvent[]
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scenario         Scenario          @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  events           CashFlowEvent[]
+  bankTransactions BankTransaction[]
 
   @@index([tenantId])
   @@index([scenarioId])

@@ -177,6 +177,98 @@ export const cashFlowEventRepository = {
     return this.findByTreasuryImportBatch(tenantId, treasuryImportBatchId, client);
   },
 
+  /** Mutabakat adaylarını çeker: SADECE `PLANNED` (nötrlenmiş/iptal olanlar
+   * aday DEĞİLDİR) ve verilen tarih aralığındakiler. Aralık, banka
+   * hareketlerinin valör aralığı + eşleşme penceresi kadar GENİŞLETİLMİŞ
+   * olarak geçirilir (bkz. reconciliation.service.ts). */
+  async findMatchCandidates(
+    tenantId: string,
+    scenarioId: string,
+    fromDate: string,
+    toDate: string,
+    client: PrismaClientOrTx = prismaAsTxClient,
+  ): Promise<CashFlowEvent[]> {
+    const rows = await client.cashFlowEvent.findMany({
+      where: {
+        tenantId,
+        scenarioId,
+        status: "PLANNED",
+        dueDate: { gte: new Date(fromDate), lte: new Date(toDate) },
+      },
+      orderBy: { dueDate: "asc" },
+    });
+    return rows.map(toCashFlowEvent);
+  },
+
+  /** Projeksiyon için: senaryonun TÜM `PLANNED` olayları (tarih sınırı
+   * SERVİSTE uygulanır — vadesi geçmiş olanlar da ayrı kovaya girmek üzere
+   * gereklidir, bkz. treasury-balance.service.ts). */
+  async findPlanned(
+    tenantId: string,
+    scenarioId: string,
+    client: PrismaClientOrTx = prismaAsTxClient,
+  ): Promise<CashFlowEvent[]> {
+    const rows = await client.cashFlowEvent.findMany({
+      where: { tenantId, scenarioId, status: "PLANNED" },
+      orderBy: { dueDate: "asc" },
+    });
+    return rows.map(toCashFlowEvent);
+  },
+
+  /** Durum geçişi (PLANNED <-> NEUTRALIZED). `expectedStatus` OPTİMİSTİK
+   * KİLİTTİR: `updateMany` filtresine dahil edilir, böylece araya giren bir
+   * başka istek durumu değiştirdiyse 0 satır güncellenir ve çağıran 409
+   * atar — "önce oku sonra yaz" yarışı yapısal olarak kapanır. `client`
+   * ZORUNLU (her zaman transaction içinden çağrılır). */
+  async transitionStatus(
+    tenantId: string,
+    id: string,
+    expectedStatus: CashFlowEventStatus,
+    nextStatus: CashFlowEventStatus,
+    client: PrismaClientOrTx,
+  ): Promise<boolean> {
+    const result = await client.cashFlowEvent.updateMany({
+      where: { id, tenantId, status: expectedStatus },
+      data: { status: nextStatus },
+    });
+    return result.count > 0;
+  },
+
+  /** "Deftere ekle" (promote): tahmin edilmemiş GERÇEK bir hareket için
+   * doğrudan NEUTRALIZED bir olay yaratır — hareket eşleşmemiş kalıp
+   * defterde delik bırakmasın diye (bkz. plan §3.4). */
+  async createFromPromotion(
+    tenantId: string,
+    userId: string,
+    input: {
+      scenarioId: string;
+      dueDate: string;
+      direction: "INFLOW" | "OUTFLOW";
+      amount: number;
+      categoryId: string;
+      counterparty: string | null;
+      description: string | null;
+    },
+    client: PrismaClientOrTx,
+  ): Promise<CashFlowEvent> {
+    const row = await client.cashFlowEvent.create({
+      data: {
+        id: crypto.randomUUID(),
+        tenantId,
+        scenarioId: input.scenarioId,
+        dueDate: new Date(input.dueDate),
+        direction: input.direction,
+        amountMinor: BigInt(toMinorUnits(input.amount)),
+        status: "NEUTRALIZED",
+        categoryId: input.categoryId,
+        counterparty: input.counterparty,
+        description: input.description,
+        createdByUserId: userId,
+      },
+    });
+    return toCashFlowEvent(row);
+  },
+
   async findByTreasuryImportBatch(
     tenantId: string,
     treasuryImportBatchId: string,

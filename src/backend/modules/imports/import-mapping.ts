@@ -1,3 +1,4 @@
+import { fold } from "@/backend/core/text";
 import { parseAmount } from "@/shared/lib/parse-amount";
 import type {
   BudgetCategory,
@@ -13,39 +14,6 @@ import type {
  * o boşluğu dolduran eşleştirme/çözümleme mantığını içerir; import.service.ts
  * bunu HTTP'den bağımsız, test edilebilir saf fonksiyonlar olarak çağırır.
  */
-
-function normalize(text: string): string {
-  return text
-    .toLocaleLowerCase("tr-TR")
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Türkçe'ye özgü harfleri ASCII karşılığına indirger (ş->s, ı->i, ğ->g, ü->u,
- * ö->o, ç->c). Eş anlamlı tablosunu (ve ay adlarını) TEK bir ASCII biçiminde
- * tutup hem onu hem gelen veriyi bu fonksiyondan geçirerek karşılaştırıyoruz
- * — "maaş" yazan ama sözlükte sadece "maas" olan bir kaydın SESSİZCE
- * eşleşmemesi gibi hataları yapısal olarak önler (bkz. commit sonrası
- * doğrulama testi: bu tam olarak başımıza gelmişti, aksanlı/aksansız her
- * varyantı elle listelemek yerine tek bir katlama fonksiyonuna geçildi).
- */
-function foldTurkish(text: string): string {
-  return text
-    .replace(/ş/g, "s")
-    .replace(/ı/g, "i")
-    .replace(/ğ/g, "g")
-    .replace(/ü/g, "u")
-    .replace(/ö/g, "o")
-    .replace(/ç/g, "c");
-}
-
-// export edilir — treasury/thp-mapping.ts AYNI Türkçe katlama davranışına
-// ihtiyaç duyuyor (THP hesap adı eşleştirmesi için), kod tekrarı yerine.
-export function fold(text: string): string {
-  return foldTurkish(normalize(text));
-}
 
 const HEADER_HINTS: Record<Exclude<ImportTargetField, "skip">, string[]> = {
   categoryId: ["kategori", "hesap adi", "hesap ad", "hesap", "account"],

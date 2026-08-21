@@ -68,3 +68,115 @@ export type CreateMappingConfigInput = z.infer<typeof createMappingConfigSchema>
 export const updateMappingConfigSchema = createMappingConfigSchema.partial();
 
 export type UpdateMappingConfigInput = z.infer<typeof updateMappingConfigSchema>;
+
+// ----------------------------------------------------
+// Banka & Mutabakat (Faz 4.3)
+// ----------------------------------------------------
+
+// `balance` NEGATİF OLABİLİR (kredili mevduat) — `amount` alanlarındaki
+// `.positive()` disiplini BURAYA UYGULANMAZ, bilinçli.
+export const upsertBankBalanceSchema = z.object({
+  asOfDate: dateSchema,
+  balance: z.number(),
+  note: z.string().optional(),
+});
+
+export type UpsertBankBalanceInput = z.infer<typeof upsertBankBalanceSchema>;
+
+export const createBankTransactionSchema = z.object({
+  valueDate: dateSchema,
+  direction: cashFlowDirectionSchema,
+  amount: z.number().positive("Tutar 0'dan büyük olmalı."),
+  description: z.string().min(1, "Açıklama zorunludur."),
+  counterparty: z.string().optional(),
+  externalRef: z.string().optional(),
+});
+
+export type CreateBankTransactionInput = z.infer<typeof createBankTransactionSchema>;
+
+export const listBankTransactionsSchema = z.object({
+  fromDate: dateSchema.optional(),
+  toDate: dateSchema.optional(),
+  /** "true" -> sadece eşleşmemiş hareketler (mutabakat ekranının varsayılanı). */
+  onlyUnmatched: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((v) => v === "true"),
+});
+
+export type ListBankTransactionsQuery = z.infer<typeof listBankTransactionsSchema>;
+
+// Tolerans/pencere ÜST SINIRLARI kasıtlı: 30 günü ve %5'i aşan bir "eşleşme"
+// artık eşleşme değil tahmindir — kullanıcı isterse elle promote eder.
+export const reconciliationSuggestionsSchema = z.object({
+  scenarioId: z.string().min(1, "scenarioId zorunludur."),
+  fromDate: dateSchema.optional(),
+  toDate: dateSchema.optional(),
+  dateWindowDays: z.number().int().min(0).max(30).optional(),
+  amountTolerancePct: z.number().min(0).max(5).optional(),
+});
+
+export type ReconciliationSuggestionsQuery = z.infer<
+  typeof reconciliationSuggestionsSchema
+>;
+
+export const confirmMatchesSchema = z.object({
+  pairs: z
+    .array(
+      z.object({
+        bankTransactionId: z.string().min(1),
+        cashFlowEventId: z.string().min(1),
+      }),
+    )
+    .min(1, "En az bir eşleşme seçilmeli.")
+    .max(200, "Tek seferde en fazla 200 eşleşme onaylanabilir."),
+});
+
+export type ConfirmMatchesInput = z.infer<typeof confirmMatchesSchema>;
+
+export const unmatchSchema = z.object({
+  bankTransactionId: z.string().min(1, "bankTransactionId zorunludur."),
+});
+
+export type UnmatchInput = z.infer<typeof unmatchSchema>;
+
+export const promoteTransactionSchema = z.object({
+  bankTransactionId: z.string().min(1, "bankTransactionId zorunludur."),
+  scenarioId: z.string().min(1, "scenarioId zorunludur."),
+  categoryId: z.string().min(1, "categoryId zorunludur."),
+  description: z.string().optional(),
+});
+
+export type PromoteTransactionInput = z.infer<typeof promoteTransactionSchema>;
+
+// 90 gün varsayılan (plan §3.2 "90 günlük yuvarlanan nakit pozisyonu");
+// 366 üst sınırı bir yıllık pencereye izin verir ama sınırsız tarama YOK.
+export const treasuryPositionSchema = z.object({
+  scenarioId: z.string().min(1, "scenarioId zorunludur."),
+  startDate: dateSchema.optional(),
+  days: z.coerce.number().int().min(1).max(366).optional(),
+});
+
+export type TreasuryPositionQuery = z.infer<typeof treasuryPositionSchema>;
+
+export const bankTargetFieldSchema = z.enum([
+  "valueDate",
+  "description",
+  "counterparty",
+  "amount",
+  "debit",
+  "credit",
+  "externalRef",
+  "skip",
+]);
+
+export const bankRemapSchema = z.object({
+  mapping: z.array(
+    z.object({
+      sourceColumn: z.string(),
+      targetField: bankTargetFieldSchema,
+    }),
+  ),
+});
+
+export type BankRemapInput = z.infer<typeof bankRemapSchema>;

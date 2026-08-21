@@ -13,8 +13,10 @@ const NAV = [
   { href: "/sabit-kiymetler", label: "Sabit Kıymetler" },
   { href: "/satis", label: "Satış" },
   // Faz 4.4'e kadar /hazine ana sayfası (AG Grid + What-If) yok — nav geçici
-  // olarak doğrudan THP Eşleştirme'ye işaret eder, o fazda güncellenir.
-  { href: "/hazine/eslestirme", label: "Hazine" },
+  // olarak modülün iki alt ekranını doğrudan gösterir, o fazda tek bir
+  // "Hazine" girişiyle değiştirilir.
+  { href: "/hazine/eslestirme", label: "Hazine · Eşleştirme" },
+  { href: "/hazine/mutabakat", label: "Hazine · Mutabakat" },
   { href: "/ice-aktarma", label: "İçe Aktarma" },
   { href: "/denetim-kaydi", label: "Denetim Kaydı" },
   { href: "/hesap", label: "Hesap" },

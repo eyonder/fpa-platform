@@ -12,7 +12,7 @@ import type {
 } from "@/shared/types";
 
 import { resolveRows, suggestMapping } from "./import-mapping";
-import { parseFile } from "./import-parser";
+import { parseFile } from "@/backend/core/tabular-file";
 import { importRepository } from "./import.repository";
 
 /**

@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma, prismaAsTxClient } from "@/backend/core/prisma-client";
 import type { PrismaClientOrTx } from "@/backend/core/prisma-client";
 import type {
+  BankColumnMapping,
   ThpColumnMapping,
   TreasuryImportKind,
   TreasuryImportStatus,
@@ -22,21 +23,33 @@ import type { TreasuryImportBatch as TreasuryImportBatchRow } from "@prisma/clie
  *
  * Bu dosya SADECE DB'ye yansıyan alanları taşır (`TreasuryImportBatchRecord`)
  * — tam API yanıtı (rows/issues dahil) servis katmanında birleştirilir.
+ *
+ * `appliedMapping` GENERIC'tir (`M`): AYNI tablo iki farklı sihirbaz
+ * tarafından paylaşılır (`kind = THP` / `kind = BANK_STATEMENT`) ve her
+ * birinin kolon eşleştirme şekli farklıdır. Varsayılan `ThpColumnMapping[]`
+ * — böylece Faz 4.2'de yazılan çağrı yerleri DEĞİŞMEDEN derlenir; banka
+ * tarafı `BankColumnMapping[]` geçirir. DB'de her ikisi de aynı `Json`
+ * kolonudur, ayrım `kind` ile yapılır.
  */
+
+/** Bu tabloda saklanabilecek kolon eşleştirme şekilleri. */
+export type StoredColumnMapping = ThpColumnMapping[] | BankColumnMapping[];
 
 export interface RawGrid {
   headers: string[];
   rows: string[][];
 }
 
-export interface TreasuryImportBatchRecord {
+export interface TreasuryImportBatchRecord<
+  M extends StoredColumnMapping = ThpColumnMapping[],
+> {
   id: string;
   tenantId: string;
   scenarioId: string;
   fileName: string;
   status: TreasuryImportStatus;
   kind: TreasuryImportKind;
-  appliedMapping: ThpColumnMapping[] | null;
+  appliedMapping: M | null;
   rowCount: number;
   mappedCount: number;
   skippedCount: number;
@@ -45,7 +58,9 @@ export interface TreasuryImportBatchRecord {
   updatedAt: string;
 }
 
-function toRecord(row: TreasuryImportBatchRow): TreasuryImportBatchRecord {
+function toRecord<M extends StoredColumnMapping = ThpColumnMapping[]>(
+  row: TreasuryImportBatchRow,
+): TreasuryImportBatchRecord<M> {
   return {
     id: row.id,
     tenantId: row.tenantId,
@@ -53,7 +68,7 @@ function toRecord(row: TreasuryImportBatchRow): TreasuryImportBatchRecord {
     fileName: row.fileName,
     status: row.status,
     kind: row.kind,
-    appliedMapping: row.appliedMapping as unknown as ThpColumnMapping[] | null,
+    appliedMapping: row.appliedMapping as unknown as M | null,
     rowCount: row.rowCount,
     mappedCount: row.mappedCount,
     skippedCount: row.skippedCount,
@@ -64,13 +79,13 @@ function toRecord(row: TreasuryImportBatchRow): TreasuryImportBatchRecord {
 }
 
 export const treasuryImportRepository = {
-  async findById(
+  async findById<M extends StoredColumnMapping = ThpColumnMapping[]>(
     tenantId: string,
     id: string,
     client: PrismaClientOrTx = prismaAsTxClient,
-  ): Promise<TreasuryImportBatchRecord | null> {
+  ): Promise<TreasuryImportBatchRecord<M> | null> {
     const row = await client.treasuryImportBatch.findUnique({ where: { id } });
-    return row && row.tenantId === tenantId ? toRecord(row) : null;
+    return row && row.tenantId === tenantId ? toRecord<M>(row) : null;
   },
 
   async create(
@@ -79,7 +94,7 @@ export const treasuryImportRepository = {
     scenarioId: string,
     fileName: string,
     kind: TreasuryImportKind = "THP",
-  ): Promise<TreasuryImportBatchRecord> {
+  ): Promise<TreasuryImportBatchRecord<StoredColumnMapping>> {
     const row = await prisma.treasuryImportBatch.create({
       data: {
         id: crypto.randomUUID(),
@@ -90,7 +105,7 @@ export const treasuryImportRepository = {
         createdByUserId: userId,
       },
     });
-    return toRecord(row);
+    return toRecord<StoredColumnMapping>(row);
   },
 
   async saveRawGrid(id: string, grid: RawGrid): Promise<void> {
@@ -108,11 +123,11 @@ export const treasuryImportRepository = {
     return (row?.rawGrid as RawGrid | null | undefined) ?? null;
   },
 
-  async updateMapping(
+  async updateMapping<M extends StoredColumnMapping = ThpColumnMapping[]>(
     id: string,
-    mapping: ThpColumnMapping[],
+    mapping: M,
     counts: { rowCount: number; mappedCount: number; skippedCount: number },
-  ): Promise<TreasuryImportBatchRecord> {
+  ): Promise<TreasuryImportBatchRecord<M>> {
     const row = await prisma.treasuryImportBatch.update({
       where: { id },
       data: {
@@ -122,14 +137,16 @@ export const treasuryImportRepository = {
         skippedCount: counts.skippedCount,
       },
     });
-    return toRecord(row);
+    return toRecord<M>(row);
   },
 
-  async markCommitted(id: string): Promise<TreasuryImportBatchRecord> {
+  async markCommitted<M extends StoredColumnMapping = ThpColumnMapping[]>(
+    id: string,
+  ): Promise<TreasuryImportBatchRecord<M>> {
     const row = await prisma.treasuryImportBatch.update({
       where: { id },
       data: { status: "COMMITTED", rawGrid: Prisma.JsonNull },
     });
-    return toRecord(row);
+    return toRecord<M>(row);
   },
 };

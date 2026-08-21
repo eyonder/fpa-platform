@@ -1,4 +1,4 @@
-import { fold } from "@/backend/modules/imports/import-mapping";
+import { fold } from "@/backend/core/text";
 import { parseAmount } from "@/shared/lib/parse-amount";
 import type {
   BudgetCategory,
