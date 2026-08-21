@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { apiClient, ApiError } from "@/frontend/lib/api-client";
+import { useDisplayCurrency } from "@/frontend/lib/display-currency";
 import type { BudgetLineInput, BudgetSheet } from "@/shared/types";
 
 type SheetState =
@@ -22,6 +23,7 @@ function toMessage(error: unknown, fallback: string): string {
 
 /** Bir senaryonun bütçe tablosunu getirir ve hücre değişikliklerini kaydeder. */
 export function useBudgetLines(scenarioId: string | null) {
+  const { queryValue: displayCurrency } = useDisplayCurrency();
   const [sheet, setSheet] = useState<BudgetSheet | null>(null);
   const [error, setError] = useState<{ scenarioId: string; message: string } | null>(
     null,
@@ -32,10 +34,15 @@ export function useBudgetLines(scenarioId: string | null) {
 
     const controller = new AbortController();
 
+    const currencyParam = displayCurrency
+      ? `&displayCurrency=${encodeURIComponent(displayCurrency)}`
+      : "";
+
     apiClient
-      .get<BudgetSheet>(`/budget-lines?scenarioId=${encodeURIComponent(scenarioId)}`, {
-        signal: controller.signal,
-      })
+      .get<BudgetSheet>(
+        `/budget-lines?scenarioId=${encodeURIComponent(scenarioId)}${currencyParam}`,
+        { signal: controller.signal },
+      )
       .then((result) => {
         if (controller.signal.aborted) return;
         setSheet(result);
@@ -47,7 +54,7 @@ export function useBudgetLines(scenarioId: string | null) {
       });
 
     return () => controller.abort();
-  }, [scenarioId]);
+  }, [scenarioId, displayCurrency]);
 
   // "loading" render sırasında türetilir (effect içinde setState yerine):
   // istenen scenarioId'ye ait ne bir sonuç ne de bir hata varsa yükleniyordur.

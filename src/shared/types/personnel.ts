@@ -84,6 +84,30 @@ export interface MonthlyPayrollTotal {
   totalEmployerCost: number;
 }
 
+/**
+ * ŞİRKET DÜZEYİNDE aylık bordro nakit bileşenleri — KİŞİSEL VERİ İÇERMEZ
+ * (kişi kırılımı yok). Hazine projeksiyonu bunu kullanır, `PayrollRunPreview`i
+ * DEĞİL: bir şirketin aylık toplam bordrosu nakit tahmini için gereken tek
+ * şeydir ve `payroll:read`in (ADMIN-only, kişisel veri gizliliği) koruduğu
+ * bilgi DEĞİLDİR — bkz. payroll.service.ts#previewAggregate.
+ */
+export interface MonthlyPayrollCashTotal {
+  /** 1-12 */
+  month: number;
+  /** Ayın 5'inde ödenen net maaşlar toplamı. */
+  totalNet: number;
+  /** Ayın 26'sında ödenen yasal kesintiler (SGK + gelir + damga + işveren payı). */
+  totalStatutory: number;
+  /** totalNet + totalStatutory — bordronun toplam işveren maliyeti. */
+  totalEmployerCost: number;
+}
+
+export interface PayrollCashAggregate {
+  scenarioId: string;
+  fiscalYear: number;
+  months: MonthlyPayrollCashTotal[];
+}
+
 export interface PayrollRunPreview {
   scenarioId: string;
   fiscalYear: number;

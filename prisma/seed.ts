@@ -50,10 +50,13 @@ interface BudgetLineRow {
 
 function monthlyLines(
   scenarioId: string,
-  categoryId: string,
+  categoryCode: string,
   amounts: number[],
 ): BudgetLineRow[] {
   const tenantId = SCENARIO_TENANT[scenarioId];
+  // Kategori id'si artık tenant'a özel — çağrı yerleri sade KODU geçmeye
+  // devam eder, id burada tek noktada kurulur.
+  const categoryId = `${tenantId}:${categoryCode}`;
   return amounts.map((amount, index) => ({
     scenarioId,
     categoryId,
@@ -67,10 +70,10 @@ function monthlyLines(
 /** 12 ay boyunca sabit tutar — holding alt şirketleri için (basitlik amaçlı). */
 function flatMonthlyLines(
   scenarioId: string,
-  categoryId: string,
+  categoryCode: string,
   monthlyAmount: number,
 ): BudgetLineRow[] {
-  return monthlyLines(scenarioId, categoryId, Array(12).fill(monthlyAmount));
+  return monthlyLines(scenarioId, categoryCode, Array(12).fill(monthlyAmount));
 }
 
 async function resetDatabase() {
@@ -102,6 +105,7 @@ async function resetDatabase() {
   await prisma.mappingConfig.deleteMany();
   await prisma.treasuryImportBatch.deleteMany();
   await prisma.bankBalance.deleteMany();
+  await prisma.bankAccount.deleteMany();
   await prisma.scenario.deleteMany();
   await prisma.employee.deleteMany();
   await prisma.membership.deleteMany();
@@ -294,57 +298,66 @@ async function seedScenarios() {
 }
 
 async function seedBudgetCategoriesAndLines() {
+  // Kategoriler artık TENANT'A ÖZEL (bkz. prisma/schema.prisma) — aynı 8
+  // demo kategorisi HER tenant için ayrı satır olarak üretilir. `code` tenant
+  // içinde kararlı anahtardır; id = "<tenantId>:<code>" (migration'ın ürettiği
+  // biçimle BİREBİR aynı, böylece seed edilmiş ve taşınmış veriler ayrışmaz).
+  const CATEGORY_TEMPLATE = [
+    {
+      code: "cat-gelir",
+      name: "Satış Geliri",
+      type: BudgetCategoryType.INCOME,
+      sortOrder: 0,
+    },
+    {
+      code: "cat-personel",
+      name: "Personel Giderleri",
+      type: BudgetCategoryType.EXPENSE,
+      sortOrder: 1,
+    },
+    {
+      code: "cat-pazarlama",
+      name: "Pazarlama",
+      type: BudgetCategoryType.EXPENSE,
+      sortOrder: 2,
+    },
+    {
+      code: "cat-kira",
+      name: "Kira & Ofis",
+      type: BudgetCategoryType.EXPENSE,
+      sortOrder: 3,
+    },
+    {
+      code: "cat-saas",
+      name: "Yazılım & SaaS",
+      type: BudgetCategoryType.EXPENSE,
+      sortOrder: 4,
+    },
+    {
+      code: "cat-seyahat",
+      name: "Seyahat",
+      type: BudgetCategoryType.EXPENSE,
+      sortOrder: 5,
+    },
+    {
+      code: "cat-diger",
+      name: "Diğer Giderler",
+      type: BudgetCategoryType.EXPENSE,
+      sortOrder: 6,
+    },
+    {
+      code: "cat-amortisman",
+      name: "Amortisman Giderleri",
+      type: BudgetCategoryType.EXPENSE,
+      sortOrder: 7,
+    },
+  ];
+  const SEED_TENANT_IDS = ["demo-tenant", "org-holding", "org-tr", "org-de", "org-us"];
+
   await prisma.budgetCategory.createMany({
-    data: [
-      {
-        id: "cat-gelir",
-        name: "Satış Geliri",
-        type: BudgetCategoryType.INCOME,
-        sortOrder: 0,
-      },
-      {
-        id: "cat-personel",
-        name: "Personel Giderleri",
-        type: BudgetCategoryType.EXPENSE,
-        sortOrder: 1,
-      },
-      {
-        id: "cat-pazarlama",
-        name: "Pazarlama",
-        type: BudgetCategoryType.EXPENSE,
-        sortOrder: 2,
-      },
-      {
-        id: "cat-kira",
-        name: "Kira & Ofis",
-        type: BudgetCategoryType.EXPENSE,
-        sortOrder: 3,
-      },
-      {
-        id: "cat-saas",
-        name: "Yazılım & SaaS",
-        type: BudgetCategoryType.EXPENSE,
-        sortOrder: 4,
-      },
-      {
-        id: "cat-seyahat",
-        name: "Seyahat",
-        type: BudgetCategoryType.EXPENSE,
-        sortOrder: 5,
-      },
-      {
-        id: "cat-diger",
-        name: "Diğer Giderler",
-        type: BudgetCategoryType.EXPENSE,
-        sortOrder: 6,
-      },
-      {
-        id: "cat-amortisman",
-        name: "Amortisman Giderleri",
-        type: BudgetCategoryType.EXPENSE,
-        sortOrder: 7,
-      },
-    ],
+    data: SEED_TENANT_IDS.flatMap((tenantId) =>
+      CATEGORY_TEMPLATE.map((c) => ({ id: `${tenantId}:${c.code}`, tenantId, ...c })),
+    ),
   });
 
   const lines: BudgetLineRow[] = [

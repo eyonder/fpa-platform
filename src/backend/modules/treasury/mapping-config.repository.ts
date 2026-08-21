@@ -143,19 +143,28 @@ export const mappingConfigRepository = {
     userId: string,
     defaults: ThpStarterMapping[],
   ): Promise<MappingConfigEntry[]> {
+    // Başlangıç seti kategori KODU taşır; id bu tenant'a göre çözümlenir.
+    // Kodu bu tenant'ta bulunmayan kurallar SESSİZCE ATLANIR — hesap planı
+    // şirkete özel olduğu için "cat-saas" gibi bir kod her tenant'ta
+    // bulunmayabilir; tüm seed'i patlatmak yerine kuralı yazmamak doğrudur.
+    const categories = await prisma.budgetCategory.findMany({ where: { tenantId } });
+    const idByCode = new Map(categories.map((c) => [c.code, c.id]));
+
     await prisma.mappingConfig.createMany({
-      data: defaults.map((d) => ({
-        id: crypto.randomUUID(),
-        tenantId,
-        accountCode: d.accountCode,
-        accountName: d.accountName,
-        categoryId: d.categoryId,
-        direction: d.direction,
-        layer: d.layer,
-        defaultTermDays: d.defaultTermDays ?? null,
-        isActive: true,
-        createdByUserId: userId,
-      })),
+      data: defaults
+        .filter((d) => idByCode.has(d.categoryCode))
+        .map((d) => ({
+          id: crypto.randomUUID(),
+          tenantId,
+          accountCode: d.accountCode,
+          accountName: d.accountName,
+          categoryId: idByCode.get(d.categoryCode)!,
+          direction: d.direction,
+          layer: d.layer,
+          defaultTermDays: d.defaultTermDays ?? null,
+          isActive: true,
+          createdByUserId: userId,
+        })),
       skipDuplicates: true,
     });
     return this.findByTenant(tenantId);

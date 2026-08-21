@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { apiClient, ApiError } from "@/frontend/lib/api-client";
+import { useDisplayCurrency } from "@/frontend/lib/display-currency";
 import type { DashboardSummary } from "@/shared/types";
 
 export type CategoryType = "EXPENSE" | "INCOME";
@@ -41,7 +42,9 @@ export function useDashboardSummary(params: Params) {
   const [summaryKey, setSummaryKey] = useState<string | null>(null);
   const [error, setError] = useState<{ key: string; message: string } | null>(null);
 
-  const key = requestKey(params);
+  const { queryValue: displayCurrency } = useDisplayCurrency();
+  const baseKey = requestKey(params);
+  const key = baseKey ? `${baseKey}:${displayCurrency ?? "native"}` : null;
   const { budgetScenarioId, actualScenarioId, fiscalYear, categoryType } = params;
 
   useEffect(() => {
@@ -54,6 +57,7 @@ export function useDashboardSummary(params: Params) {
       fiscalYear: String(fiscalYear),
       categoryType,
     });
+    if (displayCurrency) query.set("displayCurrency", displayCurrency);
 
     apiClient
       .get<DashboardSummary>(`/dashboard-summary?${query}`, {
@@ -71,7 +75,14 @@ export function useDashboardSummary(params: Params) {
       });
 
     return () => controller.abort();
-  }, [key, budgetScenarioId, actualScenarioId, fiscalYear, categoryType]);
+  }, [
+    key,
+    budgetScenarioId,
+    actualScenarioId,
+    fiscalYear,
+    categoryType,
+    displayCurrency,
+  ]);
 
   const state: State = !key
     ? { status: "loading" }

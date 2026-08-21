@@ -12,7 +12,7 @@
 // tablolarda aktiftir: Scenario, BudgetLine, AuditLog, ImportJob (bkz.
 // prisma/migrations/*_enable_rls/migration.sql). User/Membership/Session/
 // PasswordResetToken (kimlik çözümleme, tenant bilinmeden ÖNCE sorgulanır)
-// ve Tenant/FxRate/BudgetCategory (küresel referans verisi) BİLEREK RLS
+// ve Tenant/FxRate (küresel referans verisi) BİLEREK RLS
 // dışında tutulmuştur.
 
 // Prisma 7: bağlantı URL'i artık burada değil, `prisma.config.ts` +
@@ -59,6 +59,8 @@ model Tenant {
   bankBalances           BankBalance[]
   bankTransactions       BankTransaction[]
   treasuryImportBatches  TreasuryImportBatch[]
+  budgetCategories       BudgetCategory[]
+  bankAccounts           BankAccount[]
 
   @@index([parentTenantId])
 }
@@ -201,7 +203,7 @@ model Scenario {
 }
 
 // ----------------------------------------------------
-// 5. Bütçe kategorileri (küresel referans — RLS YOK, bugünkü davranışla aynı)
+// 5. Bütçe kategorileri (TENANT'A ÖZEL, RLS'li — aşağıdaki nota bakınız)
 // ----------------------------------------------------
 
 enum BudgetCategoryType {
@@ -209,17 +211,34 @@ enum BudgetCategoryType {
   EXPENSE
 }
 
+// TENANT'A ÖZELDİR (RLS'li). Eskiden KÜRESEL bir referans tablosuydu (8 sabit
+// demo kategorisi); gerçek bir şirketin hesap planı (149 THP alt hesabı)
+// yüklenirken bu tasarım tıkandı: küresel bir tabloya eklemek bir şirketin
+// hesap planını DİĞER tenant'lara sızdırırdı — MappingConfig'in tenant'a özel
+// yapılmasıyla AYNI izolasyon gerekçesi (bkz. o modeldeki not).
+//
+// `code`, tenant İÇİNDE kararlı anahtardır ve İKİ işi vardır:
+//  1. Konsolidasyon farklı tenant'ların kategorilerini `code` üzerinden
+//     eşler (id'ler artık tenant'a özel olduğu için id ile eşleşemez).
+//  2. Modüllerin sabit kategori referansları (`cat-personel` gibi) id değil
+//     KOD taşır ve çalışma anında tenant'a göre çözümlenir.
 model BudgetCategory {
   id        String             @id
+  tenantId  String
+  code      String
   name      String
   type      BudgetCategoryType
   sortOrder Int
 
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   budgetLines    BudgetLine[]
   auditLogs      AuditLog[]
   expenseEntries ExpenseEntry[]
   cashFlowEvents CashFlowEvent[]
   mappingConfigs MappingConfig[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
 }
 
 // ----------------------------------------------------
@@ -792,6 +811,10 @@ enum CashFlowEventStatus {
 enum CashFlowEventSource {
   MANUAL // elle giriş / grid içi düzenleme / Excel'den yapıştırma
   THP_IMPORT // Tek Düzen Hesap Planı Excel içe aktarımı (Faz 4.2)
+  // Bütçe/gerçekleşen satırlarından ÜRETİLMİŞ (tahakkuk -> nakit, ödeme vadesi
+  // konvansiyonuyla). AYRI bir kaynak olması ŞART: yeniden üretim SADECE bu
+  // satırları siler, elle girilmiş MANUAL satırlara DOKUNMAZ.
+  BUDGET_DERIVED
 }
 
 // THP hesabının hangi katmana ait olduğu. 120/320 gibi BİLANÇO hesapları
@@ -825,7 +848,7 @@ model CashFlowEvent {
   accrualStartMonth   Int? // 1..12
   accrualSpreadMonths Int     @default(1) // 12 = yıla yayılan hizmet bedeli
 
-  categoryId String // BudgetCategory (GLOBAL tablo, RLS yok)
+  categoryId String // BudgetCategory (tenant'a özel, RLS'li)
 
   counterparty String?
   description  String?
@@ -895,32 +918,71 @@ model MappingConfig {
 
 // "Top Bakiye" — elle girilen banka bakiye fotoğrafı. MVP: TEK hesap,
 // TEK para birimi (tenant.baseCurrency) — bkz. plan'daki kapsam notu.
-model BankBalance {
+// Banka hesabı (RLS'li). Faz 4.3'te BİLİNÇLİ olarak KAPSAM DIŞI bırakılmıştı
+// (plan'daki kesinti #1 "tek hesap" ve #2 "tek para birimi") — gerçek bir
+// müşteri bakiye tablosu 9 BANKA × 3 PARA BİRİMİ getirince o kesinti geri
+// alındı. Kesintinin planda yazılı ileri yolu birebir uygulandı: BankAccount
+// eklendi, BankBalance/BankTransaction'a NULLABLE bankAccountId kondu, mevcut
+// satırlar varsayılan bir hesaba taşındı, sonra ZORUNLU yapıldı.
+//
+// BİR HESAP = BİR PARA BİRİMİ. Kaynak tablo da böyle: aynı bankanın TL/USD/EUR
+// bakiyeleri AYRI hesaplardır. Tutarlar hesabın KENDİ para biriminde saklanır;
+// tenant'ın raporlama para birimine çevrim projeksiyon anında FxRate ile
+// yapılır (bkz. treasury-window.ts) — kur DEĞİŞTİĞİNDE geçmişe dönük
+// veri düzeltmesi gerekmesin diye çevrilmiş tutar SAKLANMAZ.
+model BankAccount {
   id       String @id
   tenantId String
 
+  bankName String // "Odeabank"
+  currency String // TRY / USD / EUR — hesabın para birimi
+  iban     String?
+  isActive Boolean @default(true)
+  sortOrder Int    @default(0)
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  balances     BankBalance[]
+  transactions BankTransaction[]
+
+  @@unique([tenantId, bankName, currency])
+  @@index([tenantId])
+}
+
+model BankBalance {
+  id            String @id
+  tenantId      String
+  bankAccountId String
+
   asOfDate     DateTime @db.Date
-  balanceMinor BigInt // NEGATİF OLABİLİR (kredili mevduat)
+  balanceMinor BigInt // hesabın KENDİ para biriminde; NEGATİF OLABİLİR (kredili mevduat)
   note         String?
 
   recordedByUserId String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
 
-  @@unique([tenantId, asOfDate]) // günde tek fotoğraf — upsert edilir
+  // Hesap başına günde tek fotoğraf (eskiden tenant başına tekti).
+  @@unique([tenantId, bankAccountId, asOfDate])
   @@index([tenantId])
+  @@index([bankAccountId])
 }
 
 // Gerçekleşen banka hareketi (elle veya Excel ile — Faz 4.3).
 model BankTransaction {
-  id       String @id
-  tenantId String
+  id            String @id
+  tenantId      String
+  bankAccountId String
 
   valueDate   DateTime          @db.Date // valör
   direction   CashFlowDirection
-  amountMinor BigInt // HER ZAMAN pozitif
+  amountMinor BigInt // hesabın KENDİ para biriminde; HER ZAMAN pozitif
 
   description  String
   counterparty String?
@@ -944,6 +1006,7 @@ model BankTransaction {
   updatedAt       DateTime @updatedAt
 
   tenant         Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bankAccount    BankAccount          @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
   matchedEvent   CashFlowEvent?       @relation(fields: [matchedEventId], references: [id], onDelete: SetNull)
   treasuryImport TreasuryImportBatch? @relation(fields: [treasuryImportBatchId], references: [id], onDelete: SetNull)
 
@@ -952,6 +1015,7 @@ model BankTransaction {
   @@index([tenantId, valueDate])
   @@index([tenantId, matchedEventId])
   @@index([treasuryImportBatchId])
+  @@index([bankAccountId])
 }
 
 // THP (Tek Düzen Hesap Planı) Excel içe aktarım sihirbazı (Faz 4.2) —

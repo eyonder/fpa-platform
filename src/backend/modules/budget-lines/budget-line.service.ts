@@ -2,6 +2,7 @@ import { AppError, NotFoundError } from "@/backend/core/errors";
 import { withTenantTransaction } from "@/backend/core/prisma-client";
 import type { RequestContext } from "@/backend/core/tenant";
 import { auditService } from "@/backend/modules/audit/audit.service";
+import { resolveDisplayConversion } from "@/backend/modules/fx/display-currency";
 import { scenarioRepository } from "@/backend/modules/scenarios/scenario.repository";
 import type {
   AuditSource,
@@ -29,16 +30,42 @@ import { budgetLineRepository } from "./budget-line.repository";
  * uygulanır — üç ayrı yerde üç kez yazılmaz.
  */
 export const budgetLineService = {
-  async getSheet(tenantId: string, scenarioId: string): Promise<BudgetSheet> {
+  async getSheet(
+    tenantId: string,
+    scenarioId: string,
+    displayCurrency?: string,
+  ): Promise<BudgetSheet> {
     const scenario = await scenarioRepository.findById(tenantId, scenarioId);
     if (!scenario) throw new NotFoundError("Senaryo");
 
     const [categories, lines] = await Promise.all([
-      budgetLineRepository.findCategories(),
+      budgetLineRepository.findCategories(tenantId),
       budgetLineRepository.findByScenario(scenarioId),
     ]);
 
-    return { scenarioId, categories, lines };
+    // Görüntüleme para birimi SUNUM katmanıdır — saklanan tutar senaryonun
+    // kendi biriminde kalır (bkz. fx/display-currency.ts). Kur tarihi olarak
+    // mali yılın sonu kullanılır: bir bütçe yılının tamamı tek bir kurla
+    // gösterilir, aksi halde aynı satırın ayları farklı kurlarla çevrilip
+    // toplamı tutmazdı.
+    const conversion = await resolveDisplayConversion(
+      scenario.baseCurrency,
+      displayCurrency,
+      `${scenario.fiscalYear}-12-31`,
+    );
+
+    return {
+      scenarioId,
+      categories,
+      lines:
+        conversion.rate === 1
+          ? lines
+          : lines.map((l) => ({ ...l, amount: conversion.convert(l.amount) })),
+      sourceCurrency: scenario.baseCurrency,
+      displayCurrency: conversion.currency,
+      fxRate: conversion.rate,
+      warnings: conversion.warnings,
+    };
   },
 
   /**

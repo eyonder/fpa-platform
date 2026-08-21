@@ -261,7 +261,10 @@ export function BudgetGrid({
   );
 
   return (
-    <div ref={wrapperRef} className="h-[420px] w-full">
+    <div
+      ref={wrapperRef}
+      className="h-[calc(100vh-24rem)] max-h-[820px] min-h-[360px] w-full"
+    >
       <AgGridReact<GridRow>
         theme={budgetGridTheme}
         rowData={rows}

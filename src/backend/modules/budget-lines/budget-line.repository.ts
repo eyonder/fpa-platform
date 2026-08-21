@@ -23,7 +23,13 @@ import type {
  */
 
 function toBudgetCategory(row: BudgetCategoryRow): BudgetCategory {
-  return { id: row.id, name: row.name, type: row.type, sortOrder: row.sortOrder };
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    type: row.type,
+    sortOrder: row.sortOrder,
+  };
 }
 
 function toBudgetLine(row: BudgetLineRow): BudgetLine {
@@ -37,13 +43,30 @@ function toBudgetLine(row: BudgetLineRow): BudgetLine {
 }
 
 export const budgetLineRepository = {
+  /** `tenantId` ZORUNLU: BudgetCategory artık tenant'a özeldir (RLS'li).
+   * Eskiden parametresizdi ve küresel listeyi dönerdi. */
   async findCategories(
+    tenantId: string,
     client: PrismaClientOrTx = prismaAsTxClient,
   ): Promise<BudgetCategory[]> {
     const rows = await client.budgetCategory.findMany({
+      where: { tenantId },
       orderBy: { sortOrder: "asc" },
     });
     return rows.map(toBudgetCategory);
+  },
+
+  /** Modüllerin sabit kategori referansı (`cat-personel` gibi) artık id
+   * DEĞİL KOD taşır; id tenant'a göre burada çözümlenir. */
+  async findCategoryByCode(
+    tenantId: string,
+    code: string,
+    client: PrismaClientOrTx = prismaAsTxClient,
+  ): Promise<BudgetCategory | null> {
+    const row = await client.budgetCategory.findUnique({
+      where: { tenantId_code: { tenantId, code } },
+    });
+    return row ? toBudgetCategory(row) : null;
   },
 
   async findByScenario(

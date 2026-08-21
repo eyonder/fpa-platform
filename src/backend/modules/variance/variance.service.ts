@@ -1,4 +1,5 @@
 import { AppError, NotFoundError } from "@/backend/core/errors";
+import { resolveDisplayConversion } from "@/backend/modules/fx/display-currency";
 import { budgetLineRepository } from "@/backend/modules/budget-lines/budget-line.repository";
 import { scenarioRepository } from "@/backend/modules/scenarios/scenario.repository";
 import { roundMoney, roundPercent } from "@/shared/lib/money";
@@ -124,27 +125,56 @@ export const varianceService = {
         422,
       );
     }
-    if (budgetScenario.baseCurrency !== actualScenario.baseCurrency) {
+    // İKİ SENARYO FARKLI PARA BİRİMİNDEYSE: `displayCurrency` verilmişse her
+    // iki taraf da ORTAK bir birime çevrilir ve karşılaştırma anlamlı olur
+    // (gerçek müşteri verisinde plan USD, gerçekleşen TRY). Verilmemişse eski
+    // davranış korunur — sessizce iki farklı birimi karşılaştırmaktansa
+    // açıkça reddetmek doğrudur.
+    if (
+      !query.displayCurrency &&
+      budgetScenario.baseCurrency !== actualScenario.baseCurrency
+    ) {
       throw new AppError(
         "CURRENCY_MISMATCH",
-        "Bütçe ve gerçekleşen senaryoları aynı para biriminde olmalı; bu uç kur çevrimi yapmaz.",
+        "Bütçe ve gerçekleşen senaryoları farklı para biriminde. Üst çubuktan bir " +
+          "görüntüleme para birimi seçin (TRY/USD/EUR) ya da senaryoları aynı " +
+          "birime getirin.",
         422,
       );
     }
 
+    const asOfDate = `${budgetScenario.fiscalYear}-12-31`;
+    const [budgetFx, actualFx] = await Promise.all([
+      resolveDisplayConversion(
+        budgetScenario.baseCurrency,
+        query.displayCurrency,
+        asOfDate,
+      ),
+      resolveDisplayConversion(
+        actualScenario.baseCurrency,
+        query.displayCurrency,
+        asOfDate,
+      ),
+    ]);
+
     const [categories, budgetLines, actualLines] = await Promise.all([
-      budgetLineRepository.findCategories(),
+      budgetLineRepository.findCategories(tenantId),
       budgetLineRepository.findByScenario(query.budgetScenarioId),
       budgetLineRepository.findByScenario(query.actualScenarioId),
     ]);
 
+    // Her taraf KENDİ kaynağından çevrilir (plan USD, gerçekleşen TRY olabilir).
     const budgetTotals = sumAmountsByCategory(
-      budgetLines,
+      budgetFx.rate === 1
+        ? budgetLines
+        : budgetLines.map((l) => ({ ...l, amount: budgetFx.convert(l.amount) })),
       query.periodStart,
       query.periodEnd,
     );
     const actualTotals = sumAmountsByCategory(
-      actualLines,
+      actualFx.rate === 1
+        ? actualLines
+        : actualLines.map((l) => ({ ...l, amount: actualFx.convert(l.amount) })),
       query.periodStart,
       query.periodEnd,
     );
@@ -164,7 +194,7 @@ export const varianceService = {
       actualScenarioId: query.actualScenarioId,
       periodStart: query.periodStart,
       periodEnd: query.periodEnd,
-      currency: budgetScenario.baseCurrency,
+      currency: query.displayCurrency ?? budgetScenario.baseCurrency,
       rows,
       total: buildTotalRow(rows),
     };

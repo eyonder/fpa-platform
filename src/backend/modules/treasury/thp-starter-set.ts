@@ -17,7 +17,9 @@ import type { CashFlowDirection, MappingLayer } from "@/shared/types";
 export interface ThpStarterMapping {
   accountCode: string;
   accountName: string;
-  categoryId: string;
+  /** Kategori KODU (id DEĞİL) — id tenant'a özeldir ve seed sırasında
+   * çözümlenir (bkz. mapping-config.repository.ts#seedDefaults). */
+  categoryCode: string;
   direction: CashFlowDirection;
   layer: MappingLayer;
   defaultTermDays?: number;
@@ -28,7 +30,7 @@ export const THP_STARTER_MAPPINGS: ThpStarterMapping[] = [
   {
     accountCode: "120",
     accountName: "Alıcılar",
-    categoryId: "cat-gelir",
+    categoryCode: "cat-gelir",
     direction: "INFLOW",
     layer: "CASH",
     defaultTermDays: 45,
@@ -36,7 +38,7 @@ export const THP_STARTER_MAPPINGS: ThpStarterMapping[] = [
   {
     accountCode: "121",
     accountName: "Alacak Senetleri",
-    categoryId: "cat-gelir",
+    categoryCode: "cat-gelir",
     direction: "INFLOW",
     layer: "CASH",
     defaultTermDays: 90,
@@ -44,14 +46,14 @@ export const THP_STARTER_MAPPINGS: ThpStarterMapping[] = [
   {
     accountCode: "340",
     accountName: "Alınan Sipariş Avansları",
-    categoryId: "cat-gelir",
+    categoryCode: "cat-gelir",
     direction: "INFLOW",
     layer: "CASH",
   },
   {
     accountCode: "320",
     accountName: "Satıcılar",
-    categoryId: "cat-diger",
+    categoryCode: "cat-diger",
     direction: "OUTFLOW",
     layer: "CASH",
     defaultTermDays: 30,
@@ -59,7 +61,7 @@ export const THP_STARTER_MAPPINGS: ThpStarterMapping[] = [
   {
     accountCode: "321",
     accountName: "Borç Senetleri",
-    categoryId: "cat-diger",
+    categoryCode: "cat-diger",
     direction: "OUTFLOW",
     layer: "CASH",
     defaultTermDays: 90,
@@ -67,7 +69,7 @@ export const THP_STARTER_MAPPINGS: ThpStarterMapping[] = [
   {
     accountCode: "335",
     accountName: "Personele Borçlar",
-    categoryId: "cat-personel",
+    categoryCode: "cat-personel",
     direction: "OUTFLOW",
     layer: "CASH",
     defaultTermDays: 5,
@@ -75,7 +77,7 @@ export const THP_STARTER_MAPPINGS: ThpStarterMapping[] = [
   {
     accountCode: "360",
     accountName: "Ödenecek Vergi ve Fonlar",
-    categoryId: "cat-diger",
+    categoryCode: "cat-diger",
     direction: "OUTFLOW",
     layer: "CASH",
     defaultTermDays: 26,
@@ -83,7 +85,7 @@ export const THP_STARTER_MAPPINGS: ThpStarterMapping[] = [
   {
     accountCode: "361",
     accountName: "Ödenecek Sosyal Güvenlik Kesintileri",
-    categoryId: "cat-personel",
+    categoryCode: "cat-personel",
     direction: "OUTFLOW",
     layer: "CASH",
     defaultTermDays: 26,
@@ -91,7 +93,7 @@ export const THP_STARTER_MAPPINGS: ThpStarterMapping[] = [
   {
     accountCode: "159",
     accountName: "Verilen Sipariş Avansları",
-    categoryId: "cat-diger",
+    categoryCode: "cat-diger",
     direction: "OUTFLOW",
     layer: "CASH",
   },
@@ -99,77 +101,77 @@ export const THP_STARTER_MAPPINGS: ThpStarterMapping[] = [
   {
     accountCode: "600",
     accountName: "Yurtiçi Satışlar",
-    categoryId: "cat-gelir",
+    categoryCode: "cat-gelir",
     direction: "INFLOW",
     layer: "ACCRUAL",
   },
   {
     accountCode: "601",
     accountName: "Yurtdışı Satışlar",
-    categoryId: "cat-gelir",
+    categoryCode: "cat-gelir",
     direction: "INFLOW",
     layer: "ACCRUAL",
   },
   {
     accountCode: "610",
     accountName: "Satıştan İadeler (-)",
-    categoryId: "cat-gelir",
+    categoryCode: "cat-gelir",
     direction: "OUTFLOW",
     layer: "ACCRUAL",
   },
   {
     accountCode: "620",
     accountName: "Satılan Mamuller Maliyeti",
-    categoryId: "cat-diger",
+    categoryCode: "cat-diger",
     direction: "OUTFLOW",
     layer: "ACCRUAL",
   },
   {
     accountCode: "621",
     accountName: "Satılan Ticari Mallar Maliyeti",
-    categoryId: "cat-diger",
+    categoryCode: "cat-diger",
     direction: "OUTFLOW",
     layer: "ACCRUAL",
   },
   {
     accountCode: "630",
     accountName: "Araştırma ve Geliştirme Giderleri",
-    categoryId: "cat-diger",
+    categoryCode: "cat-diger",
     direction: "OUTFLOW",
     layer: "ACCRUAL",
   },
   {
     accountCode: "631",
     accountName: "Pazarlama Satış ve Dağıtım Giderleri",
-    categoryId: "cat-pazarlama",
+    categoryCode: "cat-pazarlama",
     direction: "OUTFLOW",
     layer: "ACCRUAL",
   },
   {
     accountCode: "632",
     accountName: "Genel Yönetim Giderleri",
-    categoryId: "cat-diger",
+    categoryCode: "cat-diger",
     direction: "OUTFLOW",
     layer: "ACCRUAL",
   },
   {
     accountCode: "191",
     accountName: "İndirilecek KDV",
-    categoryId: "cat-diger",
+    categoryCode: "cat-diger",
     direction: "OUTFLOW",
     layer: "ACCRUAL",
   },
   {
     accountCode: "391",
     accountName: "Hesaplanan KDV",
-    categoryId: "cat-diger",
+    categoryCode: "cat-diger",
     direction: "INFLOW",
     layer: "ACCRUAL",
   },
   {
     accountCode: "780",
     accountName: "Finansman Giderleri",
-    categoryId: "cat-diger",
+    categoryCode: "cat-diger",
     direction: "OUTFLOW",
     layer: "ACCRUAL",
   },

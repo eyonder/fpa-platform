@@ -110,7 +110,7 @@ export const forecastService = {
       );
     }
 
-    const allCategories = await budgetLineRepository.findCategories();
+    const allCategories = await budgetLineRepository.findCategories(context.tenantId);
     const categories = input.categoryIds
       ? allCategories.filter((c) => input.categoryIds!.includes(c.id))
       : allCategories;

@@ -9,6 +9,10 @@ export type BudgetCategoryType = "INCOME" | "EXPENSE";
 
 export interface BudgetCategory {
   id: string;
+  /** Tenant İÇİNDE kararlı anahtar ("cat-gelir", "600.010" gibi).
+   * `id` artık tenant'a özeldir; konsolidasyon ve modüllerin sabit kategori
+   * referansları BU alan üzerinden çalışır (bkz. prisma/schema.prisma). */
+  code: string;
   name: string;
   type: BudgetCategoryType;
   /** Grid'de satır sırası. */
@@ -36,4 +40,12 @@ export interface BudgetSheet {
   scenarioId: string;
   categories: BudgetCategory[];
   lines: BudgetLine[];
+  /** Senaryonun KENDİ para birimi — düzenlemeler bu birimde yazılır. */
+  sourceCurrency: string;
+  /** Ekranda gösterilen birim; çevrim yapılmadıysa sourceCurrency ile aynı. */
+  displayCurrency: string;
+  /** 1 = çevrim yok. Düzenleme yapılırken tutarı geri çevirmek için gerekir. */
+  fxRate: number;
+  /** Kur bulunamadıysa GÖRÜNÜR uyarı (bkz. fx/display-currency.ts). */
+  warnings: string[];
 }

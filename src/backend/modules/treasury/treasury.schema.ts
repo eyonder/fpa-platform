@@ -24,9 +24,15 @@ export const createCashFlowEventSchema = z.object({
 
 export type CreateCashFlowEventInput = z.infer<typeof createCashFlowEventSchema>;
 
+// `.strict()` KASITLI: Zod varsayılan olarak BİLİNMEYEN anahtarları SESSİZCE
+// ATAR. Bu uçta bu davranış tehlikeliydi — istemci yanlış alan adı gönderdiğinde
+// (ör. grid'in `date`i, API'nin `dueDate`i yerine) istek 200 dönüyor ama HİÇBİR
+// ŞEY değişmiyordu. Bir nakit defterinde "başarıyla hiçbir şey yapmadım" en kötü
+// hata türüdür; artık 422 VALIDATION_FAILED olur (canlı doğrulamada yakalandı).
 export const updateCashFlowEventSchema = createCashFlowEventSchema
   .omit({ scenarioId: true })
-  .partial();
+  .partial()
+  .strict();
 
 export type UpdateCashFlowEventInput = z.infer<typeof updateCashFlowEventSchema>;
 
@@ -75,7 +81,24 @@ export type UpdateMappingConfigInput = z.infer<typeof updateMappingConfigSchema>
 
 // `balance` NEGATİF OLABİLİR (kredili mevduat) — `amount` alanlarındaki
 // `.positive()` disiplini BURAYA UYGULANMAZ, bilinçli.
+// ISO-4217: 3 harf, büyük. Serbest metin kabul etmek "TL"/"tl"/"TRY" gibi
+// varyantların AYRI hesaplar doğurmasına yol açardı.
+const currencySchema = z
+  .string()
+  .regex(/^[A-Z]{3}$/, "Para birimi 3 harfli ISO kodu olmalı (TRY, USD, EUR).");
+
+export const createBankAccountSchema = z.object({
+  bankName: z.string().min(1, "Banka adı zorunludur.").max(120),
+  currency: currencySchema,
+  iban: z.string().max(40).optional(),
+  isActive: z.boolean().optional(),
+  sortOrder: z.number().int().min(0).max(9999).optional(),
+});
+
+export type CreateBankAccountInput = z.infer<typeof createBankAccountSchema>;
+
 export const upsertBankBalanceSchema = z.object({
+  bankAccountId: z.string().min(1, "Banka hesabı seçilmeli."),
   asOfDate: dateSchema,
   balance: z.number(),
   note: z.string().optional(),
@@ -84,6 +107,7 @@ export const upsertBankBalanceSchema = z.object({
 export type UpsertBankBalanceInput = z.infer<typeof upsertBankBalanceSchema>;
 
 export const createBankTransactionSchema = z.object({
+  bankAccountId: z.string().min(1, "Banka hesabı seçilmeli."),
   valueDate: dateSchema,
   direction: cashFlowDirectionSchema,
   amount: z.number().positive("Tutar 0'dan büyük olmalı."),
@@ -102,6 +126,7 @@ export const listBankTransactionsSchema = z.object({
     .enum(["true", "false"])
     .optional()
     .transform((v) => v === "true"),
+  bankAccountId: z.string().min(1).optional(),
 });
 
 export type ListBankTransactionsQuery = z.infer<typeof listBankTransactionsSchema>;
@@ -155,6 +180,10 @@ export const treasuryPositionSchema = z.object({
   scenarioId: z.string().min(1, "scenarioId zorunludur."),
   startDate: dateSchema.optional(),
   days: z.coerce.number().int().min(1).max(366).optional(),
+  displayCurrency: z
+    .string()
+    .regex(/^[A-Z]{3}$/, "Para birimi 3 harfli ISO kodu olmalı.")
+    .optional(),
 });
 
 export type TreasuryPositionQuery = z.infer<typeof treasuryPositionSchema>;
@@ -180,3 +209,14 @@ export const bankRemapSchema = z.object({
 });
 
 export type BankRemapInput = z.infer<typeof bankRemapSchema>;
+
+// Vade üst sınırı 365: bir yıldan uzun bir ödeme vadesi bütçe verisinden
+// türetilecek makul bir varsayım değildir, veri girişi hatasıdır.
+export const generateFromBudgetSchema = z.object({
+  scenarioId: z.string().min(1, "scenarioId zorunludur."),
+  sourceScenarioId: z.string().min(1).optional(),
+  revenueTermDays: z.number().int().min(0).max(365).optional(),
+  expenseTermDays: z.number().int().min(0).max(365).optional(),
+});
+
+export type GenerateFromBudgetInput = z.infer<typeof generateFromBudgetSchema>;

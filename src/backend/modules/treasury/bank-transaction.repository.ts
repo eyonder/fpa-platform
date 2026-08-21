@@ -2,7 +2,10 @@ import { prisma, prismaAsTxClient } from "@/backend/core/prisma-client";
 import type { PrismaClientOrTx } from "@/backend/core/prisma-client";
 import { fromMinorUnits, toMinorUnits } from "@/shared/lib/money";
 import type { BankTransactionEntry, CashFlowDirection } from "@/shared/types";
-import type { BankTransaction as BankTransactionRow } from "@prisma/client";
+import type {
+  BankAccount as BankAccountRow,
+  BankTransaction as BankTransactionRow,
+} from "@prisma/client";
 
 import { toIsoDate } from "./treasury.dates";
 
@@ -15,10 +18,15 @@ import { toIsoDate } from "./treasury.dates";
  * (bkz. reconciliation.service.ts#confirm).
  */
 
-function toEntry(row: BankTransactionRow): BankTransactionEntry {
+type TransactionWithAccount = BankTransactionRow & { bankAccount: BankAccountRow };
+
+function toEntry(row: TransactionWithAccount): BankTransactionEntry {
   return {
     id: row.id,
     tenantId: row.tenantId,
+    bankAccountId: row.bankAccountId,
+    bankName: row.bankAccount.bankName,
+    currency: row.bankAccount.currency,
     valueDate: toIsoDate(row.valueDate),
     direction: row.direction,
     amount: fromMinorUnits(Number(row.amountMinor)),
@@ -39,6 +47,7 @@ export interface BankTransactionFilters {
   fromDate?: string;
   toDate?: string;
   onlyUnmatched?: boolean;
+  bankAccountId?: string;
 }
 
 export const bankTransactionRepository = {
@@ -59,7 +68,9 @@ export const bankTransactionRepository = {
             }
           : {}),
         ...(filters.onlyUnmatched ? { matchedEventId: null } : {}),
+        ...(filters.bankAccountId ? { bankAccountId: filters.bankAccountId } : {}),
       },
+      include: { bankAccount: true },
       orderBy: [{ valueDate: "asc" }, { createdAt: "asc" }],
     });
     return rows.map(toEntry);
@@ -70,7 +81,10 @@ export const bankTransactionRepository = {
     id: string,
     client: PrismaClientOrTx = prismaAsTxClient,
   ): Promise<BankTransactionEntry | null> {
-    const row = await client.bankTransaction.findUnique({ where: { id } });
+    const row = await client.bankTransaction.findUnique({
+      where: { id },
+      include: { bankAccount: true },
+    });
     return row && row.tenantId === tenantId ? toEntry(row) : null;
   },
 
@@ -95,6 +109,7 @@ export const bankTransactionRepository = {
     tenantId: string,
     userId: string,
     input: {
+      bankAccountId: string;
       valueDate: string;
       direction: CashFlowDirection;
       amount: number;
@@ -107,6 +122,7 @@ export const bankTransactionRepository = {
       data: {
         id: crypto.randomUUID(),
         tenantId,
+        bankAccountId: input.bankAccountId,
         valueDate: new Date(input.valueDate),
         direction: input.direction,
         amountMinor: BigInt(toMinorUnits(input.amount)),
@@ -115,6 +131,7 @@ export const bankTransactionRepository = {
         externalRef: input.externalRef ?? null,
         createdByUserId: userId,
       },
+      include: { bankAccount: true },
     });
     return toEntry(row);
   },
@@ -122,6 +139,7 @@ export const bankTransactionRepository = {
   async createManyFromImport(
     tenantId: string,
     userId: string,
+    bankAccountId: string,
     treasuryImportBatchId: string,
     rows: ValidBankImportRow[],
     client: PrismaClientOrTx,
@@ -130,6 +148,7 @@ export const bankTransactionRepository = {
       data: rows.map((r) => ({
         id: crypto.randomUUID(),
         tenantId,
+        bankAccountId,
         valueDate: new Date(r.valueDate),
         direction: r.direction,
         amountMinor: BigInt(toMinorUnits(r.amount)),
@@ -185,6 +204,7 @@ export const bankTransactionRepository = {
   ): Promise<BankTransactionEntry[]> {
     const rows = await client.bankTransaction.findMany({
       where: { tenantId, treasuryImportBatchId },
+      include: { bankAccount: true },
       orderBy: { valueDate: "asc" },
     });
     return rows.map(toEntry);

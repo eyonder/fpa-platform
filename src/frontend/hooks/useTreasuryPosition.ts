@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { apiClient, ApiError } from "@/frontend/lib/api-client";
+import { useDisplayCurrency } from "@/frontend/lib/display-currency";
 import type { TreasuryPosition } from "@/shared/types";
 
 type State =
@@ -18,7 +19,10 @@ function toMessage(error: unknown): string {
 
 /** Senaryoya PARAMETRELİ — `useBankTransactions` ile aynı etiketli-state deseni. */
 export function useTreasuryPosition(scenarioId: string | null, days = 90) {
-  const key = scenarioId ? `${scenarioId}:${days}` : null;
+  const { queryValue: displayCurrency } = useDisplayCurrency();
+  const key = scenarioId
+    ? `${scenarioId}:${days}:${displayCurrency ?? "native"}`
+    : null;
 
   const [result, setResult] = useState<{
     key: string;
@@ -29,12 +33,15 @@ export function useTreasuryPosition(scenarioId: string | null, days = 90) {
 
   useEffect(() => {
     if (!scenarioId) return;
-    const requestKey = `${scenarioId}:${days}`;
+    const requestKey = `${scenarioId}:${days}:${displayCurrency ?? "native"}`;
     const controller = new AbortController();
+    const currencyParam = displayCurrency
+      ? `&displayCurrency=${encodeURIComponent(displayCurrency)}`
+      : "";
 
     apiClient
       .get<TreasuryPosition>(
-        `/treasury/position?scenarioId=${encodeURIComponent(scenarioId)}&days=${days}`,
+        `/treasury/position?scenarioId=${encodeURIComponent(scenarioId)}&days=${days}${currencyParam}`,
         { signal: controller.signal },
       )
       .then((position) => {
@@ -48,7 +55,7 @@ export function useTreasuryPosition(scenarioId: string | null, days = 90) {
       });
 
     return () => controller.abort();
-  }, [scenarioId, days, attempt]);
+  }, [scenarioId, days, attempt, displayCurrency]);
 
   const state: State =
     key === null

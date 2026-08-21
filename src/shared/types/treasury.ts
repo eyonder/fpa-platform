@@ -12,7 +12,9 @@ export type CashFlowDirection = "INFLOW" | "OUTFLOW";
 
 export type CashFlowEventStatus = "PLANNED" | "NEUTRALIZED" | "CANCELLED";
 
-export type CashFlowEventSource = "MANUAL" | "THP_IMPORT";
+/** BUDGET_DERIVED: bütçe/gerçekleşen satırlarından üretilmiş (bkz.
+ * budget-to-cash.service.ts). Yeniden üretim SADECE bunları siler. */
+export type CashFlowEventSource = "MANUAL" | "THP_IMPORT" | "BUDGET_DERIVED";
 
 export interface CashFlowEvent {
   id: string;
@@ -174,15 +176,45 @@ export interface TreasuryImportBatch {
 // Banka & Mutabakat (Faz 4.3)
 // ----------------------------------------------------
 
+/** Banka hesabı. BİR HESAP = BİR PARA BİRİMİ (aynı bankanın TL/USD/EUR
+ * bakiyeleri AYRI hesaplardır — kaynak bakiye tablosu da böyle kuruludur). */
+export interface BankAccount {
+  id: string;
+  tenantId: string;
+  bankName: string;
+  /** Hesabın para birimi; tutarlar HEP bu birimdedir. */
+  currency: string;
+  iban: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  createdByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateBankAccountInput {
+  bankName: string;
+  currency: string;
+  iban?: string;
+  isActive?: boolean;
+  sortOrder?: number;
+}
+
+export type UpdateBankAccountInput = Partial<CreateBankAccountInput>;
+
 /** "Top bakiye" — elle girilen banka bakiye fotoğrafı. Projeksiyonun
  * çıpasıdır (bkz. treasury-balance.service.ts). MVP: TEK hesap, TEK para
  * birimi (tenant.baseCurrency). */
 export interface BankBalanceSnapshot {
   id: string;
   tenantId: string;
+  bankAccountId: string;
+  /** Gösterim kolaylığı için hesaptan kopyalanır (salt okunur). */
+  bankName: string;
+  currency: string;
   /** YYYY-MM-DD */
   asOfDate: string;
-  /** NEGATİF OLABİLİR (kredili mevduat). */
+  /** HESABIN KENDİ para biriminde. NEGATİF OLABİLİR (kredili mevduat). */
   balance: number;
   note: string | null;
   recordedByUserId: string | null;
@@ -191,6 +223,7 @@ export interface BankBalanceSnapshot {
 }
 
 export interface UpsertBankBalanceInput {
+  bankAccountId: string;
   asOfDate: string;
   balance: number;
   note?: string;
@@ -201,10 +234,13 @@ export interface UpsertBankBalanceInput {
 export interface BankTransactionEntry {
   id: string;
   tenantId: string;
+  bankAccountId: string;
+  bankName: string;
+  currency: string;
   /** YYYY-MM-DD (valör) */
   valueDate: string;
   direction: CashFlowDirection;
-  /** HER ZAMAN pozitif; işareti direction taşır. */
+  /** HESABIN KENDİ para biriminde. HER ZAMAN pozitif; işareti direction taşır. */
   amount: number;
   description: string;
   counterparty: string | null;
@@ -222,6 +258,7 @@ export interface BankTransactionEntry {
 }
 
 export interface CreateBankTransactionInput {
+  bankAccountId: string;
   valueDate: string;
   direction: CashFlowDirection;
   amount: number;
@@ -300,13 +337,30 @@ export interface TreasuryPosition {
   scenarioId: string;
   startDate: string;
   endDate: string;
-  /** Bakiyenin dayandığı top bakiye kaydı; YOKSA null ve opening 0 kabul edilir. */
-  anchor: { asOfDate: string; balance: number } | null;
+  /** Gösterilen para birimi (çevrim yapılmadıysa senaryonunki). */
+  currency: string;
+  /** Bakiyenin dayandığı top bakiye; YOKSA null ve opening 0 kabul edilir.
+   * Çoklu hesapta: en güncel fotoğrafın tarihi + hesap kırılımı (her biri
+   * kendi para biriminde, ayrıca raporlama birimine çevrilmiş hali). */
+  anchor: {
+    asOfDate: string;
+    balance: number;
+    accounts: Array<{
+      bankAccountId: string;
+      bankName: string;
+      currency: string;
+      balance: number;
+      convertedBalance: number;
+      fxRate: number;
+    }>;
+  } | null;
   openingBalance: number;
   days: TreasuryPositionDay[];
   unreconciledOverdue: UnreconciledOverdue;
   /** Bakiyenin İLK kez negatife düştüğü gün — yoksa null. */
   firstNegativeDate: string | null;
+  /** Eksik kur vb. — ASLA sessizce yanlış bakiye gösterilmez (bkz. treasury-fx.ts). */
+  warnings: string[];
 }
 
 // ----------------------------------------------------
@@ -374,4 +428,149 @@ export interface BankImportBatch {
   createdByUserId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// ----------------------------------------------------
+// Projeksiyon & What-If simülasyonu (Faz 4.4)
+// ----------------------------------------------------
+
+/** Projeksiyon satırının KAYNAĞI. DB enum'u `CashFlowEventSource`tan
+ * BİLEREK GENİŞTİR (sadece TypeScript'te yaşar): türetilmiş (Satış/Capex/
+ * Bordro) ve simüle edilmiş satırların karşılığı olan bir DB satırı YOKTUR. */
+export type ProjectionSource =
+  | "MANUAL"
+  | "THP_IMPORT"
+  | "BUDGET_DERIVED"
+  | "SALES"
+  | "PIPELINE"
+  | "CAPEX"
+  | "PAYROLL"
+  | "SIMULATION";
+
+export type ProjectionGranularity = "DAY" | "WEEK";
+
+export interface ProjectionRow {
+  /** Kararlı kimlik — AG Grid `getRowId` ve `SHIFT_EVENT` hedeflemesi için.
+   * "event:<id>" | "sales:<milestoneId>" | "capex:<assetId>" |
+   * "payroll:<yyyy-mm>:net|statutory" | "sim:<adjustmentId>[:leg]" */
+  rowId: string;
+  /** Düzenlenebilir satırlarda PATCH hedefi; türetilmiş/simüle satırlarda null.
+   * (rowId'yi string olarak ayrıştırmak yerine AÇIK alan — frontend'in
+   * kimlik şemasını bilmesi gerekmesin.) */
+  eventId: string | null;
+  /** YYYY-MM-DD */
+  date: string;
+  direction: CashFlowDirection;
+  /** HER ZAMAN pozitif; işareti direction taşır. */
+  amount: number;
+  categoryId: string;
+  categoryName: string;
+  counterparty: string | null;
+  description: string | null;
+  source: ProjectionSource;
+  /** Sadece kalıcı `CashFlowEvent` satırlarında dolu. */
+  status: CashFlowEventStatus | null;
+  editable: boolean;
+  /** Tahakkuk katmanına yumuşak referans (salt okunur gösterim). */
+  accrualStartMonth: number | null;
+  /** Bu satırı üreten/etkileyen what-if düzeltmesi. */
+  adjustmentId?: string;
+}
+
+export interface ProjectionBucket {
+  /** DAY'de gün, WEEK'te ISO haftasının PAZARTESİsi. */
+  date: string;
+  inflow: number;
+  outflow: number;
+  net: number;
+  closingBalance: number;
+}
+
+export interface ProjectionSummary {
+  baselineMinBalance: number;
+  baselineMinDate: string | null;
+  baselineClosing: number;
+  baselineFirstNegativeDate: string | null;
+  simulatedMinBalance: number | null;
+  simulatedMinDate: string | null;
+  simulatedClosing: number | null;
+  simulatedFirstNegativeDate: string | null;
+  deltaClosing: number | null;
+  deltaMinBalance: number | null;
+}
+
+export interface IncludeDerivedSources {
+  sales?: boolean;
+  capex?: boolean;
+  payroll?: boolean;
+  /** Açık pipeline (kazanılmamış fırsatlar × kazanma olasılığı) —
+   * VARSAYILAN KAPALI: %40 olasılıklı bir fırsat, ödeme gücü tablosunda
+   * bankadaki para gibi görünmemelidir. */
+  pipeline?: boolean;
+}
+
+export interface TreasuryProjection {
+  scenarioId: string;
+  startDate: string;
+  endDate: string;
+  granularity: ProjectionGranularity;
+  currency: string;
+  openingBalance: number;
+  /** Açılışın dayandığı top bakiye tarihi; hiç kayıt yoksa null. */
+  openingBalanceAsOf: string | null;
+  /** DÜZ, tarihe göre sıralı liste — defter grid'ini besler. */
+  rows: ProjectionRow[];
+  baseline: ProjectionBucket[];
+  /** `adjustments` boşken null. */
+  simulated: ProjectionBucket[] | null;
+  summary: ProjectionSummary;
+  unreconciledOverdue: UnreconciledOverdue;
+  /** Çift sayım şüphesi vb. — ASLA otomatik satır düşürülmez, sadece uyarılır. */
+  warnings: string[];
+}
+
+// --- What-If düzeltmeleri (tek etiketli birleşim, tek uç) ---
+
+export interface RowFilter {
+  direction?: CashFlowDirection;
+  categoryIds?: string[];
+  sources?: ProjectionSource[];
+  counterpartyContains?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export type TreasuryAdjustment =
+  | {
+      kind: "ADD_EVENT";
+      id: string;
+      label: string;
+      direction: CashFlowDirection;
+      amount: number;
+      date: string;
+      categoryId?: string;
+    }
+  | {
+      kind: "SPOT_LOAN";
+      id: string;
+      label: string;
+      principal: number;
+      drawDate: string;
+      termDays: number;
+      repaymentAmount?: number;
+      annualRatePct?: number;
+    }
+  | { kind: "SHIFT_EVENT"; id: string; targetRowId: string; shiftDays: number }
+  | { kind: "SHIFT_BY_FILTER"; id: string; filter: RowFilter; shiftDays: number }
+  /** factor 0 = satırı kaldır — ayrı bir REMOVE varyantı YOK. */
+  | { kind: "SCALE_BY_FILTER"; id: string; filter: RowFilter; factor: number }
+  | { kind: "PAYROLL_RAISE"; id: string; percent: number; effectiveFrom: string };
+
+export interface TreasurySimulationInput {
+  scenarioId: string;
+  startDate?: string;
+  horizonDays?: number;
+  granularity?: ProjectionGranularity;
+  includeDerived?: IncludeDerivedSources;
+  adjustments: TreasuryAdjustment[];
 }

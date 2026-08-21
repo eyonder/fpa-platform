@@ -38,7 +38,7 @@ export const importService = {
     if (!scenario) throw new NotFoundError("Senaryo");
 
     const { headers, rows } = await parseFile(buffer, fileName);
-    const categories = await budgetLineRepository.findCategories();
+    const categories = await budgetLineRepository.findCategories(context.tenantId);
     const suggestedMapping = suggestMapping(headers);
     const { previewRows, issues } = resolveRows(
       headers,
@@ -81,7 +81,7 @@ export const importService = {
     const grid = await importRepository.findRawGrid(batchId);
     if (!grid) throw new NotFoundError("İçe aktarma (ham veri)");
 
-    const categories = await budgetLineRepository.findCategories();
+    const categories = await budgetLineRepository.findCategories(context.tenantId);
     const { previewRows, issues } = resolveRows(
       grid.headers,
       grid.rows,

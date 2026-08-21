@@ -40,3 +40,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# GERÇEK ŞİRKET VERİSİ — asla commit edilmez (depo herkese açık).
+# İçe aktarma script'leri finansal veriyi buradan okur, kod içine gömmez.
+/data
+*.xlsx

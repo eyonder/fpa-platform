@@ -59,10 +59,18 @@ export const consolidationService = {
     const contributors = [parent, ...descendants];
     const asOfDate = query.asOfDate ?? new Date().toISOString().slice(0, 10);
 
-    const categories = await budgetLineRepository.findCategories();
-    const rowsByCategory = new Map<string, ConsolidationRow>(
+    // Kategoriler artık TENANT'A ÖZELDİR (bkz. prisma/schema.prisma) — her
+    // şirketin kendi id'leri var. Konsolidasyon bu yüzden `id` ile DEĞİL
+    // `code` ile eşler; satır iskeleti ANA ŞİRKETİN kategori setinden kurulur
+    // ve alt şirketlerin satırları kendi kategorilerinin kodu üzerinden
+    // buraya toplanır. (id ile eşleseydi hiçbir alt şirket satırı tutmazdı.)
+    const categories = await budgetLineRepository.findCategories(
+      parent.id,
+      prismaBypassRls,
+    );
+    const rowsByCode = new Map<string, ConsolidationRow>(
       categories.map((c) => [
-        c.id,
+        c.code,
         { categoryId: c.id, categoryName: c.name, totalAmount: 0, byOrganization: [] },
       ]),
     );
@@ -90,18 +98,29 @@ export const consolidationService = {
         scenario.id,
         prismaBypassRls,
       );
-      const localTotalsByCategory = new Map<string, number>();
+      // Bu şirketin KENDİ kategori id'lerini koda çevirmek için kendi seti.
+      const orgCategories = await budgetLineRepository.findCategories(
+        org.id,
+        prismaBypassRls,
+      );
+      const codeByCategoryId = new Map(orgCategories.map((c) => [c.id, c.code]));
+
+      const localTotalsByCode = new Map<string, number>();
       for (const line of lines) {
         if (line.month < query.periodStart || line.month > query.periodEnd) continue;
-        localTotalsByCategory.set(
-          line.categoryId,
-          roundMoney((localTotalsByCategory.get(line.categoryId) ?? 0) + line.amount),
+        const code = codeByCategoryId.get(line.categoryId);
+        if (!code) continue; // Kategorisi çözülemeyen satır -> savunmacı atla.
+        localTotalsByCode.set(
+          code,
+          roundMoney((localTotalsByCode.get(code) ?? 0) + line.amount),
         );
       }
 
-      for (const [categoryId, localAmount] of localTotalsByCategory) {
-        const row = rowsByCategory.get(categoryId);
-        if (!row) continue; // Bilinmeyen kategori id'si -> savunmacı biçimde atla.
+      for (const [code, localAmount] of localTotalsByCode) {
+        const row = rowsByCode.get(code);
+        // Ana şirkette KARŞILIĞI OLMAYAN bir kod -> atlanır. Şirketler farklı
+        // hesap planları kullanabildiği için bu artık normal bir durumdur.
+        if (!row) continue;
 
         const { rate, convertedAmount } = await fxRateService.convert(
           localAmount,
@@ -122,7 +141,7 @@ export const consolidationService = {
       }
     }
 
-    const rows = categories.map((c) => rowsByCategory.get(c.id)!);
+    const rows = categories.map((c) => rowsByCode.get(c.code)!);
     const grandTotal = roundMoney(rows.reduce((sum, r) => sum + r.totalAmount, 0));
 
     return {

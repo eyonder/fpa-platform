@@ -63,7 +63,7 @@ export const expenseEntryService = {
     if (!scenario) throw new NotFoundError("Senaryo");
 
     await costCenterService.get(context.tenantId, input.costCenterId); // yoksa 404
-    await assertExpenseCategory(input.categoryId);
+    await assertExpenseCategory(context.tenantId, input.categoryId);
 
     const existing = await expenseEntryRepository.findByCombo(
       context.tenantId,
@@ -250,8 +250,11 @@ function assertSubmitted(entry: ExpenseEntry): void {
   }
 }
 
-async function assertExpenseCategory(categoryId: string): Promise<void> {
-  const categories = await budgetLineRepository.findCategories();
+async function assertExpenseCategory(
+  tenantId: string,
+  categoryId: string,
+): Promise<void> {
+  const categories = await budgetLineRepository.findCategories(tenantId);
   const category = categories.find((c) => c.id === categoryId);
   if (!category) throw new NotFoundError("Gider türü");
   if (category.type !== "EXPENSE") {

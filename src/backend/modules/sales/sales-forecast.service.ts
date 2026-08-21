@@ -1,5 +1,6 @@
-import { NotFoundError } from "@/backend/core/errors";
+import { AppError, NotFoundError } from "@/backend/core/errors";
 import type { RequestContext } from "@/backend/core/tenant";
+import { budgetLineRepository } from "@/backend/modules/budget-lines/budget-line.repository";
 import { budgetLineService } from "@/backend/modules/budget-lines/budget-line.service";
 import { scenarioRepository } from "@/backend/modules/scenarios/scenario.repository";
 import { roundMoney } from "@/shared/lib/money";
@@ -44,8 +45,9 @@ import { salesOpportunityRepository } from "./sales-opportunity.repository";
  */
 
 // export edilir — ileride treasury modülü gibi başka modüller AYNI
-// kategori id'sini tek kaynaktan kullanmak isteyebilir (bkz. DEPRECIATION_CATEGORY_ID).
-export const SALES_CATEGORY_ID = "cat-gelir";
+// kategori kodunu tek kaynaktan kullanmak isteyebilir (bkz. DEPRECIATION_CATEGORY_CODE).
+/** KOD (id DEĞİL) — bkz. DEPRECIATION_CATEGORY_CODE. */
+export const SALES_CATEGORY_CODE = "cat-gelir";
 
 export const salesForecastService = {
   async previewActuals(
@@ -111,8 +113,10 @@ export const salesForecastService = {
 
     if (preview.monthlyTotals.length === 0) return [];
 
+    const salesCategoryId = await resolveSalesCategoryId(context.tenantId);
+
     const lines: BudgetLineInput[] = preview.monthlyTotals.map((t) => ({
-      categoryId: SALES_CATEGORY_ID,
+      categoryId: salesCategoryId,
       month: t.month,
       amount: t.totalActual,
     }));
@@ -183,8 +187,10 @@ export const salesForecastService = {
 
     if (preview.monthlyTotals.length === 0) return [];
 
+    const salesCategoryId = await resolveSalesCategoryId(context.tenantId);
+
     const lines: BudgetLineInput[] = preview.monthlyTotals.map((t) => ({
-      categoryId: SALES_CATEGORY_ID,
+      categoryId: salesCategoryId,
       month: t.month,
       amount: t.totalWeighted,
     }));
@@ -192,3 +198,20 @@ export const salesForecastService = {
     return budgetLineService.bulkUpsert(context, scenarioId, lines, "SALES");
   },
 };
+
+/** Sabit kategori KODUNU bu tenant'taki id'ye çevirir. Kategori yoksa 409:
+ * sessizce atlamak, bütçeye hiç yazmadan "başarılı" dönmek olurdu. */
+async function resolveSalesCategoryId(tenantId: string): Promise<string> {
+  const category = await budgetLineRepository.findCategoryByCode(
+    tenantId,
+    SALES_CATEGORY_CODE,
+  );
+  if (!category) {
+    throw new AppError(
+      "BUDGET_CATEGORY_NOT_FOUND",
+      `Bu şirkette "${SALES_CATEGORY_CODE}" kodlu bütçe kategorisi tanımlı değil.`,
+      409,
+    );
+  }
+  return category.id;
+}

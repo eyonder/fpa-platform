@@ -1,5 +1,6 @@
-import { NotFoundError } from "@/backend/core/errors";
+import { AppError, NotFoundError } from "@/backend/core/errors";
 import type { RequestContext } from "@/backend/core/tenant";
+import { budgetLineRepository } from "@/backend/modules/budget-lines/budget-line.repository";
 import { budgetLineService } from "@/backend/modules/budget-lines/budget-line.service";
 import { scenarioRepository } from "@/backend/modules/scenarios/scenario.repository";
 import { fromMinorUnits, roundMoney, toMinorUnits } from "@/shared/lib/money";
@@ -26,7 +27,9 @@ import { loadVukConfigMap, resolveDepreciationParams } from "./fixed-asset.servi
 
 // export edilir — commitForScenario dahil, bu kategoriye yazan/okuyan HER
 // çağıran AYNI kategori id'sini tek kaynaktan kullanır.
-export const DEPRECIATION_CATEGORY_ID = "cat-amortisman";
+/** KOD (id DEĞİL): BudgetCategory tenant'a özeldir, id çalışma anında
+ * `budgetLineRepository.findCategoryByCode` ile çözümlenir. */
+export const DEPRECIATION_CATEGORY_CODE = "cat-amortisman";
 
 export const depreciationService = {
   async previewForScenario(
@@ -94,8 +97,12 @@ export const depreciationService = {
 
     if (preview.monthlyTotals.length === 0) return [];
 
+    const depreciationCategoryId = await resolveDepreciationCategoryId(
+      context.tenantId,
+    );
+
     const lines: BudgetLineInput[] = preview.monthlyTotals.map((t) => ({
-      categoryId: DEPRECIATION_CATEGORY_ID,
+      categoryId: depreciationCategoryId,
       month: t.month,
       amount: t.totalDepreciation,
     }));
@@ -103,3 +110,20 @@ export const depreciationService = {
     return budgetLineService.bulkUpsert(context, scenarioId, lines, "DEPRECIATION");
   },
 };
+
+/** Sabit kategori KODUNU bu tenant'taki id'ye çevirir. Kategori yoksa 409:
+ * sessizce atlamak, bütçeye hiç yazmadan "başarılı" dönmek olurdu. */
+async function resolveDepreciationCategoryId(tenantId: string): Promise<string> {
+  const category = await budgetLineRepository.findCategoryByCode(
+    tenantId,
+    DEPRECIATION_CATEGORY_CODE,
+  );
+  if (!category) {
+    throw new AppError(
+      "BUDGET_CATEGORY_NOT_FOUND",
+      `Bu şirkette "${DEPRECIATION_CATEGORY_CODE}" kodlu bütçe kategorisi tanımlı değil.`,
+      409,
+    );
+  }
+  return category.id;
+}

@@ -79,7 +79,7 @@ export const auditService = {
     // saklanır (doğru, sorgulanabilir), okunabilir adlar sadece burada eklenir.
     const [scenarios, categories] = await Promise.all([
       scenarioRepository.findMany(tenantId, {}),
-      budgetLineRepository.findCategories(),
+      budgetLineRepository.findCategories(tenantId),
     ]);
     const scenarioNameById = new Map(scenarios.map((s) => [s.id, s.name]));
     const categoryNameById = new Map(categories.map((c) => [c.id, c.name]));

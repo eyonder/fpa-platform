@@ -36,6 +36,39 @@ export const salesBillingMilestoneRepository = {
   },
 
   /**
+   * Hazine projeksiyonu (Faz 4.4) için: KAZANILMIŞ (WON) fırsatların verilen
+   * gün aralığındaki hakediş faturalama tarihleri, fırsat bilgisiyle birlikte.
+   *
+   * `sales-forecast.service.ts#previewActuals`in TAM TERSİ: orası bu günleri
+   * BudgetLine'a yazmak için AYA toplar, burada gün hassasiyeti KORUNUR —
+   * 90 günlük bir nakit tablosunda ayın 3'ü ile 28'i aynı şey değildir.
+   */
+  async findWonInWindow(
+    tenantId: string,
+    fromDate: string,
+    toDate: string,
+    client: PrismaClientOrTx = prismaAsTxClient,
+  ): Promise<DerivedSalesMilestone[]> {
+    const rows = await client.salesBillingMilestone.findMany({
+      where: {
+        tenantId,
+        billingDate: { gte: new Date(fromDate), lte: new Date(toDate) },
+        salesOpportunity: { stage: "WON" },
+      },
+      include: { salesOpportunity: true },
+      orderBy: { billingDate: "asc" },
+    });
+    return rows.map((row) => ({
+      milestoneId: row.id,
+      opportunityId: row.salesOpportunityId,
+      billingDate: row.billingDate.toISOString().slice(0, 10),
+      amount: fromMinorUnits(Number(row.amountMinor)),
+      customerName: row.salesOpportunity.customerName,
+      dealName: row.salesOpportunity.dealName,
+    }));
+  },
+
+  /**
    * Milestone listesini TAMAMEN değiştirir — `allocationKeyRepository.upsert`teki
    * AYNI sil-sonra-topluca-oluştur deseni. Çok adımlı bir tenant yazma akışı
    * olduğu için `withTenantTransaction` ZORUNLU (`prisma`nın otomatik
@@ -72,3 +105,16 @@ export const salesBillingMilestoneRepository = {
     });
   },
 };
+
+/** Hazine projeksiyonunun ihtiyaç duyduğu, fırsat bilgisiyle zenginleştirilmiş
+ * hakediş satırı (paylaşılan `SalesBillingMilestone` tipi id taşımaz — orada
+ * gerekmiyordu, burada satır kimliği ŞART). */
+export interface DerivedSalesMilestone {
+  milestoneId: string;
+  opportunityId: string;
+  /** YYYY-MM-DD */
+  billingDate: string;
+  amount: number;
+  customerName: string;
+  dealName: string;
+}

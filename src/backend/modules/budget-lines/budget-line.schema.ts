@@ -1,7 +1,15 @@
 import { z } from "zod";
 
+/** Görüntüleme para birimi — SUNUM amaçlı, saklanan veriyi değiştirmez
+ * (bkz. backend/modules/fx/display-currency.ts). */
+export const displayCurrencySchema = z
+  .string()
+  .regex(/^[A-Z]{3}$/, "Para birimi 3 harfli ISO kodu olmalı.")
+  .optional();
+
 export const listBudgetLinesSchema = z.object({
   scenarioId: z.string().min(1, "scenarioId zorunludur."),
+  displayCurrency: displayCurrencySchema,
 });
 
 export type ListBudgetLinesQuery = z.infer<typeof listBudgetLinesSchema>;

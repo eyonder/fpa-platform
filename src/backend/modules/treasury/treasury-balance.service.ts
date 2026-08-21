@@ -1,18 +1,20 @@
 import { NotFoundError } from "@/backend/core/errors";
+import { resolveDisplayConversion } from "@/backend/modules/fx/display-currency";
 import { scenarioRepository } from "@/backend/modules/scenarios/scenario.repository";
 import { fromMinorUnits, toMinorUnits } from "@/shared/lib/money";
 import type {
-  BankTransactionEntry,
   CashFlowEvent,
   TreasuryPosition,
   TreasuryPositionDay,
   UnreconciledOverdue,
 } from "@/shared/types";
 
-import { bankBalanceRepository } from "./bank-balance.repository";
+import { bankService } from "./bank.service";
 import { bankTransactionRepository } from "./bank-transaction.repository";
 import { cashFlowEventRepository } from "./cash-flow-event.repository";
-import { addDays, dateRange, todayIso } from "./treasury.dates";
+import { dateRange } from "./treasury.dates";
+import { convertTransactionsByDay } from "./treasury-fx";
+import { computeOpeningBalanceMinor, resolveWindow } from "./treasury-window";
 
 /**
  * İŞ MANTIĞI KATMANI (Service) — NAKİT POZİSYONU.
@@ -43,26 +45,32 @@ import { addDays, dateRange, todayIso } from "./treasury.dates";
  *
  * Tüm ara aritmetik KURUŞ (integer) üzerinden yapılır — 90 günlük kümülatif
  * toplamda float kayması gerçek bir risktir (bkz. shared/lib/money.ts).
+ *
+ * Pencere ve açılış bakiyesi aritmetiği `treasury-window.ts`tedir — Faz 4.4'ün
+ * `treasury-projection.service.ts`i ile PAYLAŞILIR, iki ekranın açılış
+ * bakiyesi asla ayrışmasın diye.
  */
-
-const DEFAULT_HORIZON_DAYS = 90;
 
 export const treasuryBalanceService = {
   async position(
     tenantId: string,
-    query: { scenarioId: string; startDate?: string; days?: number },
+    query: {
+      scenarioId: string;
+      startDate?: string;
+      days?: number;
+      displayCurrency?: string;
+    },
   ): Promise<TreasuryPosition> {
     const scenario = await scenarioRepository.findById(tenantId, query.scenarioId);
     if (!scenario) throw new NotFoundError("Senaryo");
 
-    const startDate = query.startDate ?? todayIso();
-    const horizon = query.days ?? DEFAULT_HORIZON_DAYS;
-    // Pencere startDate'in ERTESİ gününde başlar (startDate'in kendisi açılış
-    // bakiyesine dahildir), bu yüzden son gün startDate + horizon'dur.
-    const endDate = addDays(startDate, horizon);
+    const { startDate, firstDay, endDate, horizonDays } = resolveWindow(
+      query.startDate,
+      query.days,
+    );
 
     const [anchor, transactions, plannedEvents] = await Promise.all([
-      bankBalanceRepository.findAnchor(tenantId, startDate),
+      bankService.resolveAnchor(tenantId, startDate, scenario.baseCurrency),
       // Çıpadan itibaren pencerenin sonuna kadar TÜM hareketler gerekir:
       // çıpa ile startDate arası açılış bakiyesini, sonrası günlük eğriyi kurar.
       bankTransactionRepository.findMany(tenantId, { toDate: endDate }),
@@ -70,25 +78,28 @@ export const treasuryBalanceService = {
     ]);
 
     const anchorDate = anchor?.asOfDate ?? null;
-    const anchorMinor = anchor ? toMinorUnits(anchor.balance) : 0;
 
-    // --- AÇILIŞ: çıpa + (çıpa < valör <= startDate) ---
-    let openingMinor = anchorMinor;
-    for (const txn of transactions) {
-      if (anchorDate !== null && txn.valueDate <= anchorDate) continue; // kural 1
-      if (txn.valueDate > startDate) continue;
-      openingMinor += signedMinor(txn);
-    }
+    // --- AÇILIŞ (kural 1) — bkz. treasury-window.ts. Çıpa artık ÇOKLU HESAP:
+    // tutar zaten raporlama para birimine çevrilmiş halde geliyor. ---
+    // Hareketler hesabın KENDİ para biriminde — çevrim treasury-fx.ts'te.
+    const converted = await convertTransactionsByDay(
+      transactions,
+      scenario.baseCurrency,
+    );
+    const warnings = [...(anchor?.warnings ?? []), ...converted.warnings];
+
+    const openingMinor = computeOpeningBalanceMinor(
+      anchor ? { asOfDate: anchor.asOfDate, totalMinor: anchor.totalMinor } : null,
+      converted.byDay,
+      startDate,
+    );
 
     // --- GÜNLÜK KOVALAR: startDate < d <= endDate ---
     const bankByDay = new Map<string, number>();
-    for (const txn of transactions) {
-      if (anchorDate !== null && txn.valueDate <= anchorDate) continue;
-      if (txn.valueDate <= startDate || txn.valueDate > endDate) continue;
-      bankByDay.set(
-        txn.valueDate,
-        (bankByDay.get(txn.valueDate) ?? 0) + signedMinor(txn),
-      );
+    for (const [date, minor] of converted.byDay) {
+      if (anchorDate !== null && date <= anchorDate) continue;
+      if (date <= startDate || date > endDate) continue;
+      bankByDay.set(date, minor);
     }
 
     const plannedByDay = new Map<string, number>();
@@ -118,7 +129,7 @@ export const treasuryBalanceService = {
     let runningMinor = openingMinor;
     const days: TreasuryPositionDay[] = [];
 
-    for (const date of dateRange(addDays(startDate, 1), horizon)) {
+    for (const date of dateRange(firstDay, horizonDays)) {
       const bankMinor = bankByDay.get(date) ?? 0;
       const plannedMinor = plannedByDay.get(date) ?? 0;
       runningMinor += bankMinor + plannedMinor;
@@ -132,23 +143,49 @@ export const treasuryBalanceService = {
 
     const firstNegativeDate = days.find((d) => d.closingBalance < 0)?.date ?? null;
 
+    // Görüntüleme para birimi EN SON uygulanır (bkz. treasury-projection.service.ts).
+    const display = await resolveDisplayConversion(
+      scenario.baseCurrency,
+      query.displayCurrency,
+      startDate,
+    );
+    warnings.push(...display.warnings);
+    const c = display.convert;
+
     return {
       scenarioId: query.scenarioId,
       startDate,
       endDate,
-      anchor: anchor ? { asOfDate: anchor.asOfDate, balance: anchor.balance } : null,
-      openingBalance: fromMinorUnits(openingMinor),
-      days,
-      unreconciledOverdue: overdue,
+      anchor: anchor
+        ? {
+            asOfDate: anchor.asOfDate,
+            balance: c(fromMinorUnits(anchor.totalMinor)),
+            // Hesap kırılımı KENDİ para biriminde kalır — bir USD hesabını
+            // "USD" etiketiyle TRY tutarında göstermek yanıltıcı olurdu.
+            accounts: anchor.accounts,
+          }
+        : null,
+      openingBalance: c(fromMinorUnits(openingMinor)),
+      days:
+        display.rate === 1
+          ? days
+          : days.map((d) => ({
+              date: d.date,
+              bankActualNet: c(d.bankActualNet),
+              plannedNet: c(d.plannedNet),
+              closingBalance: c(d.closingBalance),
+            })),
+      unreconciledOverdue: {
+        count: overdue.count,
+        inflowTotal: c(overdue.inflowTotal),
+        outflowTotal: c(overdue.outflowTotal),
+      },
       firstNegativeDate,
+      currency: display.currency,
+      warnings,
     };
   },
 };
-
-function signedMinor(transaction: BankTransactionEntry): number {
-  const minor = toMinorUnits(transaction.amount);
-  return transaction.direction === "INFLOW" ? minor : -minor;
-}
 
 function signedEventMinor(event: CashFlowEvent): number {
   const minor = toMinorUnits(event.amount);

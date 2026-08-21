@@ -12,7 +12,7 @@ import { budgetLineRepository } from "@/backend/modules/budget-lines/budget-line
  * BAĞIMSIZ bir kategori listesine ihtiyacı var.
  */
 export const GET = handleRoute((request: Request) =>
-  withTenantContext(request, async () => {
-    return ok(await budgetLineRepository.findCategories());
+  withTenantContext(request, async ({ tenantId }) => {
+    return ok(await budgetLineRepository.findCategories(tenantId));
   }),
 );

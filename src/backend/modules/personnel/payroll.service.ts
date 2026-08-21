@@ -1,5 +1,6 @@
 import { AppError, NotFoundError } from "@/backend/core/errors";
 import type { RequestContext } from "@/backend/core/tenant";
+import { budgetLineRepository } from "@/backend/modules/budget-lines/budget-line.repository";
 import { budgetLineService } from "@/backend/modules/budget-lines/budget-line.service";
 import { scenarioRepository } from "@/backend/modules/scenarios/scenario.repository";
 import { fromMinorUnits, roundMoney, toMinorUnits } from "@/shared/lib/money";
@@ -8,6 +9,8 @@ import type {
   BudgetLineInput,
   Employee,
   EmployeeMonthlyBreakdown,
+  MonthlyPayrollCashTotal,
+  PayrollCashAggregate,
   PayrollRunPreview,
 } from "@/shared/types";
 
@@ -22,6 +25,14 @@ import { payrollTaxConfigRepository } from "./payroll-tax-config.repository";
  *
  * Kural: Bu dosya HTTP'yi, Next.js'i veya React'i bilmez. Sadece iş kurallarını bilir.
  *
+ * `preview` KİŞİ KIRILIMI döndürür ve `payroll:read` (SADECE ADMIN, kişisel
+ * veri gizliliği) ile korunur. `previewAggregate` ise SADECE şirket düzeyinde
+ * aylık toplamları döndürür — kişisel veri içermez, bu yüzden Hazine
+ * projeksiyonu onu `treasury:read` altında kullanabilir (bkz.
+ * treasury-projection.service.ts). İkisi de AYNI hesap motorunu çağırır;
+ * Hazine'nin Türk SGK/gelir vergisi mantığını KENDİ İÇİNDE yeniden yazması
+ * ilk yasal oran değişiminde sessizce ayrışmak demek olurdu.
+ *
  * `preview` HİÇBİR ŞEY YAZMAZ — sadece hesaplar. `commitToBudget` bu önizlemeyi
  * TEKRAR HESAPLAYIP (state saklamadan, basitlik için) toplam işveren maliyetini
  * ayl(k olarak "Personel Giderleri" (`cat-personel`) kategorisine, TEK bütçe
@@ -30,7 +41,8 @@ import { payrollTaxConfigRepository } from "./payroll-tax-config.repository";
  * TEKRAR uygulanmaz.
  */
 
-const PERSONNEL_CATEGORY_ID = "cat-personel";
+/** KOD (id DEĞİL) — bkz. depreciation.service.ts. */
+const PERSONNEL_CATEGORY_CODE = "cat-personel";
 
 function monthStartDate(fiscalYear: number, month: number): string {
   return `${fiscalYear}-${String(month).padStart(2, "0")}-01`;
@@ -57,10 +69,29 @@ function isEmployedDuringMonth(
   return true;
 }
 
+/**
+ * What-If için bordro çarpanı. `PAYROLL_RAISE` düzeltmesi çıktıyı 1.30 ile
+ * ÇARPARAK taklit EDİLEMEZ: Türk gelir vergisi artan oranlıdır ve kümülatif
+ * matrah dilim aşımı yaratır, yani %30 zam net/vergi bileşenlerini DOĞRUSAL
+ * OLMAYAN biçimde değiştirir. Bu yüzden çarpan ücretin KENDİSİNE uygulanır
+ * ve motor yeniden çalıştırılır.
+ */
+export interface PayrollSimulationOptions {
+  /** 1.30 = %30 zam. */
+  grossMultiplier: number;
+  /** 1-12; bu ay ve SONRASI etkilenir. */
+  effectiveFromMonth: number;
+}
+
+export interface PayrollPreviewOptions {
+  simulation?: PayrollSimulationOptions;
+}
+
 export const payrollService = {
   async preview(
     context: RequestContext,
     scenarioId: string,
+    options?: PayrollPreviewOptions,
   ): Promise<PayrollRunPreview> {
     const scenario = await scenarioRepository.findById(context.tenantId, scenarioId);
     if (!scenario) throw new NotFoundError("Senaryo");
@@ -103,6 +134,13 @@ export const payrollService = {
         );
         if (!compensation) continue; // henüz ücret kaydı girilmemiş
 
+        // Simülasyon çarpanı ÜCRETE uygulanır (GROSS_FIXED'te brüte,
+        // NET_FIXED'te hedef nete) — motor sonrasında değil, ÖNCESİNDE.
+        const simulatedAmount =
+          options?.simulation && month >= options.simulation.effectiveFromMonth
+            ? compensation.amount * options.simulation.grossMultiplier
+            : compensation.amount;
+
         const inputs = {
           overtimeHours: compensation.plannedOvertimeHoursPerMonth,
           mealAllowanceDays: compensation.mealAllowanceDays,
@@ -114,13 +152,13 @@ export const payrollService = {
           compensation.inputMode === "GROSS_FIXED"
             ? grossToNet(
                 profile,
-                { baseGrossMinor: toMinorUnits(compensation.amount), ...inputs },
+                { baseGrossMinor: toMinorUnits(simulatedAmount), ...inputs },
                 cumulativeTaxBaseMinor,
                 config,
               )
             : netToGross(
                 profile,
-                toMinorUnits(compensation.amount),
+                toMinorUnits(simulatedAmount),
                 inputs,
                 cumulativeTaxBaseMinor,
                 config,
@@ -163,6 +201,46 @@ export const payrollService = {
     };
   },
 
+  /**
+   * Hazine projeksiyonunun kullandığı KİŞİSEL VERİSİZ kapı.
+   *
+   * `preview`in AYNI motorunu çağırır, sonra kişi kırılımını ATAR ve sadece
+   * aylık şirket toplamlarını döndürür. Nakit ayrımı KASITLI: net maaşlar ve
+   * yasal kesintiler AYNI ayda ama FARKLI günlerde ödenir (bkz.
+   * treasury-derivations.ts) — tek kalem olarak vermek 90 günlük bir ödeme
+   * gücü tablosunda anlamlı bir hata olurdu.
+   *
+   * `totalStatutory = employerCost - net` özdeşliğinden türetilir: brüt =
+   * net + işçi SGK + gelir + damga olduğundan, işveren maliyetinden neti
+   * çıkarmak TÜM yasal yükü (işveren payı dahil) verir.
+   */
+  async previewAggregate(
+    context: RequestContext,
+    scenarioId: string,
+    options?: PayrollPreviewOptions,
+  ): Promise<PayrollCashAggregate> {
+    const preview = await this.preview(context, scenarioId, options);
+
+    const byMonth = new Map<number, { net: number; employerCost: number }>();
+    for (const row of preview.employees) {
+      const bucket = byMonth.get(row.month) ?? { net: 0, employerCost: 0 };
+      bucket.net += row.netAmount;
+      bucket.employerCost += row.employerCost;
+      byMonth.set(row.month, bucket);
+    }
+
+    const months: MonthlyPayrollCashTotal[] = [...byMonth.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([month, bucket]) => ({
+        month,
+        totalNet: roundMoney(bucket.net),
+        totalStatutory: roundMoney(bucket.employerCost - bucket.net),
+        totalEmployerCost: roundMoney(bucket.employerCost),
+      }));
+
+    return { scenarioId, fiscalYear: preview.fiscalYear, months };
+  },
+
   async commitToBudget(
     context: RequestContext,
     scenarioId: string,
@@ -177,8 +255,10 @@ export const payrollService = {
       );
     }
 
+    const personnelCategoryId = await resolvePersonnelCategoryId(context.tenantId);
+
     const lines: BudgetLineInput[] = preview.monthlyTotals.map((t) => ({
-      categoryId: PERSONNEL_CATEGORY_ID,
+      categoryId: personnelCategoryId,
       month: t.month,
       amount: t.totalEmployerCost,
     }));
@@ -186,3 +266,20 @@ export const payrollService = {
     return budgetLineService.bulkUpsert(context, scenarioId, lines, "PAYROLL");
   },
 };
+
+/** Sabit kategori KODUNU bu tenant'taki id'ye çevirir. Kategori yoksa 409:
+ * sessizce atlamak, bütçeye hiç yazmadan "başarılı" dönmek olurdu. */
+async function resolvePersonnelCategoryId(tenantId: string): Promise<string> {
+  const category = await budgetLineRepository.findCategoryByCode(
+    tenantId,
+    PERSONNEL_CATEGORY_CODE,
+  );
+  if (!category) {
+    throw new AppError(
+      "BUDGET_CATEGORY_NOT_FOUND",
+      `Bu şirkette "${PERSONNEL_CATEGORY_CODE}" kodlu bütçe kategorisi tanımlı değil.`,
+      409,
+    );
+  }
+  return category.id;
+}

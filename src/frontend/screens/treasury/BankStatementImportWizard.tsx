@@ -4,9 +4,11 @@ import { useCallback, useRef, useState } from "react";
 
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Card } from "@/frontend/components/ui/Card";
+import { bankAccountLabel } from "@/frontend/hooks/useBankAccounts";
 import { apiClient, ApiError } from "@/frontend/lib/api-client";
 import { formatAmount } from "@/frontend/lib/format";
 import type {
+  BankAccount,
   BankColumnMapping,
   BankImportBatch,
   BankTargetField,
@@ -59,11 +61,16 @@ const MAX_PREVIEW_ROWS = 25;
  */
 export function BankStatementImportWizard({
   scenarioId,
+  accounts,
   onCommitted,
 }: {
   scenarioId: string;
+  accounts: BankAccount[];
   onCommitted: () => void;
 }) {
+  // Bir ekstre TEK bir hesaba aittir ve tutarları o hesabın para birimindedir —
+  // hesabı seçtirmeden yazmak USD bir ekstreyi TL hesaba dökmek olurdu.
+  const [bankAccountId, setBankAccountId] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [wizard, setWizard] = useState<WizardState>({ step: "upload" });
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -138,7 +145,9 @@ export function BankStatementImportWizard({
       const result = await apiClient.post<{
         batch: BankImportBatch;
         createdCount: number;
-      }>(`/treasury/bank-transactions/import/${wizard.batch.id}/commit`, {});
+      }>(`/treasury/bank-transactions/import/${wizard.batch.id}/commit`, {
+        bankAccountId: bankAccountId || accounts[0]?.id,
+      });
       setCreatedCount(result.createdCount);
       setWizard({ step: "done", batch: result.batch });
       onCommitted();
@@ -149,7 +158,7 @@ export function BankStatementImportWizard({
     } finally {
       setCommitting(false);
     }
-  }, [wizard, onCommitted]);
+  }, [wizard, onCommitted, bankAccountId, accounts]);
 
   return (
     <Card
@@ -184,6 +193,21 @@ export function BankStatementImportWizard({
 
       {wizard.step === "review" ? (
         <div className="space-y-4">
+          <label className="block max-w-xs">
+            <span className="text-xs text-muted">Hangi banka hesabına?</span>
+            <select
+              className={SELECT_CLASS}
+              value={bankAccountId || (accounts[0]?.id ?? "")}
+              onChange={(e) => setBankAccountId(e.target.value)}
+            >
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {bankAccountLabel(a)}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <Badge tone="ledger">{wizard.batch.mappedCount} aktarılacak</Badge>
             <Badge tone="neutral">{wizard.batch.skippedCount} atlanacak</Badge>
@@ -317,7 +341,9 @@ export function BankStatementImportWizard({
             <button
               type="button"
               className={PRIMARY_BUTTON}
-              disabled={committing || wizard.batch.mappedCount === 0}
+              disabled={
+                committing || wizard.batch.mappedCount === 0 || accounts.length === 0
+              }
               onClick={handleCommit}
             >
               {committing ? "Aktarılıyor…" : "Onayla ve Aktar"}

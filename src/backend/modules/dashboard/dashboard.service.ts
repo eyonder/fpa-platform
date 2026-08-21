@@ -1,4 +1,5 @@
 import { AppError, NotFoundError } from "@/backend/core/errors";
+import { resolveDisplayConversion } from "@/backend/modules/fx/display-currency";
 import { budgetLineRepository } from "@/backend/modules/budget-lines/budget-line.repository";
 import { projectByAverageGrowth } from "@/backend/modules/forecast/forecast.service";
 import { scenarioRepository } from "@/backend/modules/scenarios/scenario.repository";
@@ -68,16 +69,37 @@ export const dashboardService = {
         422,
       );
     }
-    if (budgetScenario.baseCurrency !== actualScenario.baseCurrency) {
+    // Farklı para birimleri: `displayCurrency` verilmişse ortak birime
+    // çevrilir (bkz. variance.service.ts'teki aynı gerekçe).
+    if (
+      !query.displayCurrency &&
+      budgetScenario.baseCurrency !== actualScenario.baseCurrency
+    ) {
       throw new AppError(
         "CURRENCY_MISMATCH",
-        "Bütçe ve gerçekleşen senaryoları aynı para biriminde olmalı; bu uç kur çevrimi yapmaz.",
+        "Bütçe ve gerçekleşen senaryoları farklı para biriminde. Üst çubuktan bir " +
+          "görüntüleme para birimi seçin (TRY/USD/EUR) ya da senaryoları aynı " +
+          "birime getirin.",
         422,
       );
     }
 
+    const fxAsOfDate = `${budgetScenario.fiscalYear}-12-31`;
+    const [budgetFx, actualFx] = await Promise.all([
+      resolveDisplayConversion(
+        budgetScenario.baseCurrency,
+        query.displayCurrency,
+        fxAsOfDate,
+      ),
+      resolveDisplayConversion(
+        actualScenario.baseCurrency,
+        query.displayCurrency,
+        fxAsOfDate,
+      ),
+    ]);
+
     const [allCategories, budgetLines, actualLines] = await Promise.all([
-      budgetLineRepository.findCategories(),
+      budgetLineRepository.findCategories(tenantId),
       budgetLineRepository.findByScenario(query.budgetScenarioId),
       budgetLineRepository.findByScenario(query.actualScenarioId),
     ]);
@@ -86,8 +108,19 @@ export const dashboardService = {
       allCategories.filter((c) => c.type === query.categoryType).map((c) => c.id),
     );
 
-    const budgetByMonth = sumByMonth(budgetLines, categoryIds);
-    const actualByMonth = sumByMonth(actualLines, categoryIds);
+    // Her taraf KENDİ kaynak biriminden ortak görüntüleme birimine çevrilir.
+    const budgetByMonth = sumByMonth(
+      budgetFx.rate === 1
+        ? budgetLines
+        : budgetLines.map((l) => ({ ...l, amount: budgetFx.convert(l.amount) })),
+      categoryIds,
+    );
+    const actualByMonth = sumByMonth(
+      actualFx.rate === 1
+        ? actualLines
+        : actualLines.map((l) => ({ ...l, amount: actualFx.convert(l.amount) })),
+      categoryIds,
+    );
 
     const asOfMonth =
       query.asOfMonth ?? defaultAsOfMonth(query.fiscalYear, actualByMonth);
@@ -137,7 +170,7 @@ export const dashboardService = {
       fiscalYear: query.fiscalYear,
       asOfMonth,
       categoryType: query.categoryType,
-      currency: budgetScenario.baseCurrency,
+      currency: query.displayCurrency ?? budgetScenario.baseCurrency,
       months,
       kpis: {
         annualBudget,

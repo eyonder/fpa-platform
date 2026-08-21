@@ -35,7 +35,7 @@ export const mappingConfigService = {
     context: RequestContext,
     input: CreateMappingConfigInput,
   ): Promise<MappingConfigEntry> {
-    await assertCategoryExists(input.categoryId);
+    await assertCategoryExists(context.tenantId, input.categoryId);
     await assertAccountCodeAvailable(context.tenantId, input.accountCode);
     return mappingConfigRepository.create(context.tenantId, context.userId, input);
   },
@@ -47,7 +47,8 @@ export const mappingConfigService = {
   ): Promise<MappingConfigEntry> {
     const current = await this.get(context.tenantId, id);
 
-    if (input.categoryId !== undefined) await assertCategoryExists(input.categoryId);
+    if (input.categoryId !== undefined)
+      await assertCategoryExists(context.tenantId, input.categoryId);
     if (input.accountCode !== undefined && input.accountCode !== current.accountCode) {
       await assertAccountCodeAvailable(context.tenantId, input.accountCode);
     }
@@ -74,8 +75,11 @@ export const mappingConfigService = {
   },
 };
 
-async function assertCategoryExists(categoryId: string): Promise<void> {
-  const categories = await budgetLineRepository.findCategories();
+async function assertCategoryExists(
+  tenantId: string,
+  categoryId: string,
+): Promise<void> {
+  const categories = await budgetLineRepository.findCategories(tenantId);
   if (!categories.some((c) => c.id === categoryId)) {
     throw new AppError(
       "MAPPING_CATEGORY_NOT_FOUND",

@@ -18,7 +18,13 @@ export const GET = handleRoute((request: Request) =>
     const params = Object.fromEntries(new URL(request.url).searchParams);
     const query = listBudgetLinesSchema.parse(params);
 
-    return ok(await budgetLineService.getSheet(tenantId, query.scenarioId));
+    return ok(
+      await budgetLineService.getSheet(
+        tenantId,
+        query.scenarioId,
+        query.displayCurrency,
+      ),
+    );
   }),
 );
 

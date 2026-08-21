@@ -1,7 +1,13 @@
-import { AppError } from "@/backend/core/errors";
+import { AppError, NotFoundError } from "@/backend/core/errors";
 import type { RequestContext } from "@/backend/core/tenant";
-import type { BankBalanceSnapshot, BankTransactionEntry } from "@/shared/types";
+import type {
+  BankAccount,
+  BankBalanceSnapshot,
+  BankTransactionEntry,
+  CreateBankAccountInput,
+} from "@/shared/types";
 
+import { bankAccountRepository } from "./bank-account.repository";
 import { bankBalanceRepository } from "./bank-balance.repository";
 import { bankTransactionRepository } from "./bank-transaction.repository";
 import type { BankTransactionFilters } from "./bank-transaction.repository";
@@ -10,6 +16,8 @@ import type {
   CreateBankTransactionInput,
   UpsertBankBalanceInput,
 } from "./treasury.schema";
+import { convertAccountBalances } from "./treasury-fx";
+import type { ConvertedAccountBalance } from "./treasury-fx";
 
 /**
  * İŞ MANTIĞI KATMANI (Service) — GERÇEKLEŞEN taraf (top bakiye + banka
@@ -26,12 +34,66 @@ import type {
  * Kilit, senaryoya YAZAN tarafta (promote / THP commit) uygulanır.
  */
 export const bankService = {
+  async listAccounts(tenantId: string): Promise<BankAccount[]> {
+    return bankAccountRepository.findByTenant(tenantId);
+  },
+
+  async createAccount(
+    context: RequestContext,
+    input: CreateBankAccountInput,
+  ): Promise<BankAccount> {
+    const existing = await bankAccountRepository.findByTenant(context.tenantId);
+    if (
+      existing.some(
+        (a) => a.bankName === input.bankName && a.currency === input.currency,
+      )
+    ) {
+      throw new AppError(
+        "BANK_ACCOUNT_DUPLICATE",
+        `"${input.bankName}" bankasının ${input.currency} hesabı zaten tanımlı.`,
+        409,
+      );
+    }
+    return bankAccountRepository.create(context.tenantId, context.userId, input);
+  },
+
   async getBalance(tenantId: string): Promise<{
     latest: BankBalanceSnapshot | null;
     history: BankBalanceSnapshot[];
   }> {
     const history = await bankBalanceRepository.listRecent(tenantId);
     return { latest: history[0] ?? null, history };
+  },
+
+  /**
+   * Projeksiyonun ÇIPASI — çoklu hesap/para birimi.
+   * En güncel fotoğraf gününün TÜM hesap bakiyelerini raporlama para birimine
+   * çevirip toplar. Kur eksikse ilgili hesap toplama girmez ve UYARI üretilir
+   * (bkz. treasury-fx.ts) — sessizce yanlış bakiye üretilmez.
+   */
+  async resolveAnchor(
+    tenantId: string,
+    onOrBefore: string,
+    reportingCurrency: string,
+  ): Promise<{
+    asOfDate: string;
+    totalMinor: number;
+    accounts: ConvertedAccountBalance[];
+    warnings: string[];
+  } | null> {
+    const snapshots = await bankBalanceRepository.findAnchorSnapshots(
+      tenantId,
+      onOrBefore,
+    );
+    if (snapshots.length === 0) return null;
+
+    const asOfDate = snapshots[0].asOfDate;
+    const { items, totalMinor, warnings } = await convertAccountBalances(
+      snapshots,
+      reportingCurrency,
+      asOfDate,
+    );
+    return { asOfDate, totalMinor, accounts: items, warnings };
   },
 
   async upsertBalance(
@@ -49,6 +111,12 @@ export const bankService = {
         { asOfDate: ["Bugünden ileri bir tarih girilemez."] },
       );
     }
+    const account = await bankAccountRepository.findById(
+      context.tenantId,
+      input.bankAccountId,
+    );
+    if (!account) throw new NotFoundError("Banka hesabı");
+
     return bankBalanceRepository.upsert(context.tenantId, context.userId, input);
   },
 
@@ -63,6 +131,12 @@ export const bankService = {
     context: RequestContext,
     input: CreateBankTransactionInput,
   ): Promise<BankTransactionEntry> {
+    const account = await bankAccountRepository.findById(
+      context.tenantId,
+      input.bankAccountId,
+    );
+    if (!account) throw new NotFoundError("Banka hesabı");
+
     if (input.externalRef) {
       const existing = await bankTransactionRepository.findExistingRefs(
         context.tenantId,

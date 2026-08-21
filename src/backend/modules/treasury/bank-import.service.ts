@@ -142,6 +142,7 @@ export const bankImportService = {
   async commit(
     context: RequestContext,
     batchId: string,
+    bankAccountId: string,
   ): Promise<{ batch: BankImportBatch; createdCount: number }> {
     const record = await getOwnedBatch(context, batchId);
     assertPendingReview(record);
@@ -189,6 +190,7 @@ export const bankImportService = {
       bankTransactionRepository.createManyFromImport(
         context.tenantId,
         context.userId,
+        bankAccountId,
         batchId,
         validRows,
         tx,

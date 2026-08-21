@@ -204,7 +204,7 @@ async function resolvePreview(
 ) {
   const [mappingConfigs, categories] = await Promise.all([
     mappingConfigRepository.findActiveByTenant(tenantId),
-    budgetLineRepository.findCategories(),
+    budgetLineRepository.findCategories(tenantId),
   ]);
   const { previewRows, issues } = resolveThpRows(
     headers,

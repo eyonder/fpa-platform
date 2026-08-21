@@ -17,7 +17,7 @@ const BudgetGrid = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-[420px] w-full items-center justify-center rounded-md border border-rule text-sm text-muted">
+      <div className="flex h-[calc(100vh-24rem)] min-h-[360px] w-full items-center justify-center rounded-md border border-rule text-sm text-muted">
         Tablo yükleniyor…
       </div>
     ),
@@ -118,7 +118,14 @@ export function BudgetEntryScreen() {
         </div>
       </Card>
 
-      <Card title="Kategori × Ay" hint={selectedScenario?.baseCurrency}>
+      <Card
+        title="Kategori × Ay"
+        hint={
+          sheetState.status === "ready"
+            ? sheetState.sheet.displayCurrency
+            : selectedScenario?.baseCurrency
+        }
+      >
         {sheetState.status === "loading" || !effectiveScenarioId ? (
           <p className="py-6 text-sm text-muted">Bütçe tablosu yükleniyor…</p>
         ) : null}
@@ -127,12 +134,38 @@ export function BudgetEntryScreen() {
           <p className="py-6 text-sm text-brick">{sheetState.message}</p>
         ) : null}
 
+        {sheetState.status === "ready" && sheetState.sheet.warnings.length > 0 ? (
+          <div className="mb-3 rounded-md border border-rule bg-paper px-4 py-3">
+            <ul className="space-y-1 text-xs text-muted">
+              {sheetState.sheet.warnings.map((w, i) => (
+                <li key={i}>⚠ {w}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {/* ÇEVRİM AKTİFKEN DÜZENLEME KAPALI. Ekranda gösterilen tutar
+            çevrilmiştir; kullanıcı onu düzenlerse çevrilmiş sayı kaynak para
+            biriminde kaydedilir ve veri sessizce bozulur. Aynı gerekçeyle
+            Hazine'de de simülasyon aktifken defter düzenlenemez. */}
+        {sheetState.status === "ready" && sheetState.sheet.fxRate !== 1 ? (
+          <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-brick/40 bg-brick-soft px-4 py-2">
+            <Badge tone="brick">Çevrilmiş görünüm</Badge>
+            <span className="text-xs text-brick">
+              Tutarlar {sheetState.sheet.sourceCurrency} →{" "}
+              {sheetState.sheet.displayCurrency} (kur {sheetState.sheet.fxRate})
+              çevrilmiştir; düzenleme kapalıdır. Düzenlemek için üst çubuktan
+              &quot;Kayıtlı birim&quot;i seçin.
+            </span>
+          </div>
+        ) : null}
+
         {sheetState.status === "ready" && selectedScenario ? (
           <BudgetGrid
-            key={selectedScenario.id}
+            key={`${selectedScenario.id}:${sheetState.sheet.displayCurrency}`}
             categories={sheetState.sheet.categories}
             lines={sheetState.sheet.lines}
-            editable={!selectedScenario.isLocked}
+            editable={!selectedScenario.isLocked && sheetState.sheet.fxRate === 1}
             onCellsChanged={handleCellsChanged}
           />
         ) : null}

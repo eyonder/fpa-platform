@@ -5,6 +5,7 @@ import { useCallback, useState } from "react";
 import { Badge } from "@/frontend/components/ui/Badge";
 import { Card } from "@/frontend/components/ui/Card";
 import { StatTile } from "@/frontend/components/charts/StatTile";
+import { bankAccountLabel, useBankAccounts } from "@/frontend/hooks/useBankAccounts";
 import { useBankBalance } from "@/frontend/hooks/useBankBalance";
 import { useBankTransactions } from "@/frontend/hooks/useBankTransactions";
 import { useBudgetCategories } from "@/frontend/hooks/useBudgetCategories";
@@ -12,7 +13,7 @@ import { useScenarios } from "@/frontend/hooks/useScenarios";
 import { useTreasuryPosition } from "@/frontend/hooks/useTreasuryPosition";
 import { apiClient, ApiError } from "@/frontend/lib/api-client";
 import { formatAmount } from "@/frontend/lib/format";
-import type { CashFlowDirection } from "@/shared/types";
+import type { BankAccount, CashFlowDirection } from "@/shared/types";
 
 import { BankStatementImportWizard } from "./BankStatementImportWizard";
 import { MatchingPanel } from "./MatchingPanel";
@@ -54,6 +55,8 @@ export function ReconciliationScreen({
   const effectiveScenarioId = selectedScenarioId || (scenarios[0]?.id ?? "");
 
   const { state: balanceState, reload: reloadBalance } = useBankBalance();
+  const { state: accountsState } = useBankAccounts();
+  const accounts = accountsState.status === "ready" ? accountsState.accounts : [];
   const [onlyUnmatched, setOnlyUnmatched] = useState(false);
   const { state: transactionsState, reload: reloadTransactions } =
     useBankTransactions(onlyUnmatched);
@@ -105,6 +108,7 @@ export function ReconciliationScreen({
       <BankBalanceCard
         canManageBank={canManageBank}
         state={balanceState}
+        accounts={accounts}
         onSaved={reloadAll}
       />
 
@@ -151,6 +155,16 @@ export function ReconciliationScreen({
                 }
               />
             </div>
+
+            {positionState.position.warnings.length > 0 ? (
+              <div className="rounded-md border border-rule bg-paper px-4 py-3">
+                <ul className="space-y-1 text-xs text-muted">
+                  {positionState.position.warnings.map((w, i) => (
+                    <li key={i}>⚠ {w}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
 
             {positionState.position.unreconciledOverdue.count > 0 ? (
               <div className="rounded-md border border-brick/40 bg-brick-soft px-4 py-3">
@@ -218,7 +232,7 @@ export function ReconciliationScreen({
           ) : null}
 
           {canManageBank ? (
-            <ManualTransactionForm onCreated={reloadAll} />
+            <ManualTransactionForm accounts={accounts} onCreated={reloadAll} />
           ) : (
             <p className="text-xs text-muted">
               Banka hareketi girmek için Yönetici ya da Bütçe Yöneticisi rolü gerekir.
@@ -230,6 +244,7 @@ export function ReconciliationScreen({
       {canManageBank && effectiveScenarioId ? (
         <BankStatementImportWizard
           scenarioId={effectiveScenarioId}
+          accounts={accounts}
           onCommitted={reloadAll}
         />
       ) : null}
@@ -245,15 +260,77 @@ export function ReconciliationScreen({
   );
 }
 
+/** Çıpa günündeki TÜM hesap bakiyeleri, her biri KENDİ para biriminde.
+ * Tek bir toplam göstermek yanıltıcı olurdu: farklı para birimlerini toplamak
+ * ancak kurla mümkün ve o çevrim projeksiyonun işi (bkz. treasury-fx.ts). */
+function BalanceBreakdown({
+  asOfDate,
+  rows,
+}: {
+  asOfDate: string;
+  rows: Array<{
+    bankAccountId: string;
+    bankName: string;
+    currency: string;
+    balance: number;
+  }>;
+}) {
+  const byCurrency = new Map<string, number>();
+  for (const r of rows) {
+    byCurrency.set(r.currency, (byCurrency.get(r.currency) ?? 0) + r.balance);
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted">
+        {asOfDate} itibarıyla {rows.length} hesap
+      </p>
+      <div className="flex flex-wrap gap-4">
+        {[...byCurrency.entries()].map(([currency, total]) => (
+          <div key={currency}>
+            <span className="text-xs text-muted">{currency}</span>
+            <p className="tabular text-lg font-semibold">
+              {formatAmount(total, currency)}
+            </p>
+          </div>
+        ))}
+      </div>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-rule text-left text-muted">
+            <th className="py-1.5 pr-3">Banka</th>
+            <th className="py-1.5 pr-3">Para Birimi</th>
+            <th className="py-1.5 pr-3 text-right">Bakiye</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.bankAccountId} className="border-b border-rule/60">
+              <td className="py-1.5 pr-3">{r.bankName}</td>
+              <td className="py-1.5 pr-3 text-muted">{r.currency}</td>
+              <td className="tabular py-1.5 pr-3 text-right">
+                {formatAmount(r.balance, r.currency)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function BankBalanceCard({
   canManageBank,
   state,
+  accounts,
   onSaved,
 }: {
   canManageBank: boolean;
   state: ReturnType<typeof useBankBalance>["state"];
+  accounts: BankAccount[];
   onSaved: () => void;
 }) {
+  const [bankAccountId, setBankAccountId] = useState("");
   const [asOfDate, setAsOfDate] = useState("");
   const [balance, setBalance] = useState("");
   const [note, setNote] = useState("");
@@ -265,6 +342,7 @@ function BankBalanceCard({
     setError(null);
     try {
       await apiClient.put("/treasury/bank-balance", {
+        bankAccountId: bankAccountId || accounts[0]?.id,
         asOfDate,
         balance: Number(balance),
         note: note || undefined,
@@ -296,14 +374,12 @@ function BankBalanceCard({
         ) : null}
         {state.status === "ready" ? (
           state.balance.latest ? (
-            <p className="text-sm">
-              <span className="tabular text-lg font-semibold">
-                {formatAmount(state.balance.latest.balance)}
-              </span>{" "}
-              <span className="text-muted">
-                ({state.balance.latest.asOfDate} itibarıyla)
-              </span>
-            </p>
+            <BalanceBreakdown
+              asOfDate={state.balance.latest.asOfDate}
+              rows={state.balance.history.filter(
+                (h) => h.asOfDate === state.balance.latest!.asOfDate,
+              )}
+            />
           ) : (
             <p className="text-sm text-muted">
               Henüz top bakiye girilmemiş. Projeksiyon 0 açılış bakiyesiyle
@@ -314,6 +390,20 @@ function BankBalanceCard({
 
         {canManageBank ? (
           <div className="flex flex-wrap items-end gap-3 border-t border-rule pt-4">
+            <label className="block">
+              <span className="text-xs text-muted">Hesap</span>
+              <select
+                className={`${INPUT_CLASS} w-56`}
+                value={bankAccountId || (accounts[0]?.id ?? "")}
+                onChange={(e) => setBankAccountId(e.target.value)}
+              >
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {bankAccountLabel(a)}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="block">
               <span className="text-xs text-muted">Tarih</span>
               <input
@@ -345,7 +435,7 @@ function BankBalanceCard({
             <button
               type="button"
               className={PRIMARY_BUTTON}
-              disabled={!asOfDate || balance === "" || saving}
+              disabled={!asOfDate || balance === "" || saving || accounts.length === 0}
               onClick={submit}
             >
               {saving ? "Kaydediliyor…" : "Kaydet"}
@@ -367,6 +457,8 @@ function TransactionTable({
 }: {
   transactions: Array<{
     id: string;
+    bankName: string;
+    currency: string;
     valueDate: string;
     direction: CashFlowDirection;
     amount: number;
@@ -403,6 +495,7 @@ function TransactionTable({
           <thead>
             <tr className="border-b border-rule text-left text-xs text-muted">
               <th className="py-2 pr-3">Valör</th>
+              <th className="py-2 pr-3">Hesap</th>
               <th className="py-2 pr-3">Açıklama</th>
               <th className="py-2 pr-3">Karşı Taraf</th>
               <th className="py-2 pr-3 text-right">Tutar</th>
@@ -414,6 +507,9 @@ function TransactionTable({
             {transactions.map((transaction) => (
               <tr key={transaction.id} className="border-b border-rule/60">
                 <td className="tabular py-2 pr-3">{transaction.valueDate}</td>
+                <td className="py-2 pr-3 text-muted">
+                  {transaction.bankName} ({transaction.currency})
+                </td>
                 <td className="max-w-[20rem] truncate py-2 pr-3">
                   {transaction.description}
                 </td>
@@ -426,7 +522,7 @@ function TransactionTable({
                   }`}
                 >
                   {transaction.direction === "INFLOW" ? "+" : "−"}
-                  {formatAmount(transaction.amount)}
+                  {formatAmount(transaction.amount, transaction.currency)}
                 </td>
                 <td className="py-2 pr-3">
                   {transaction.matchedEventId ? (
@@ -462,7 +558,14 @@ function TransactionTable({
   );
 }
 
-function ManualTransactionForm({ onCreated }: { onCreated: () => void }) {
+function ManualTransactionForm({
+  accounts,
+  onCreated,
+}: {
+  accounts: BankAccount[];
+  onCreated: () => void;
+}) {
+  const [bankAccountId, setBankAccountId] = useState("");
   const [valueDate, setValueDate] = useState("");
   const [direction, setDirection] = useState<CashFlowDirection>("OUTFLOW");
   const [amount, setAmount] = useState("");
@@ -477,6 +580,7 @@ function ManualTransactionForm({ onCreated }: { onCreated: () => void }) {
     setError(null);
     try {
       await apiClient.post("/treasury/bank-transactions", {
+        bankAccountId: bankAccountId || accounts[0]?.id,
         valueDate,
         direction,
         amount: Number(amount),
@@ -502,6 +606,20 @@ function ManualTransactionForm({ onCreated }: { onCreated: () => void }) {
         Elle Hareket Ekle
       </h3>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <label className="block">
+          <span className="text-xs text-muted">Hesap</span>
+          <select
+            value={bankAccountId || (accounts[0]?.id ?? "")}
+            onChange={(e) => setBankAccountId(e.target.value)}
+            className={INPUT_CLASS}
+          >
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {bankAccountLabel(a)}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="block">
           <span className="text-xs text-muted">Valör</span>
           <input
@@ -565,7 +683,9 @@ function ManualTransactionForm({ onCreated }: { onCreated: () => void }) {
       <button
         type="button"
         className={PRIMARY_BUTTON}
-        disabled={!valueDate || !amount || !description || saving}
+        disabled={
+          !valueDate || !amount || !description || saving || accounts.length === 0
+        }
         onClick={submit}
       >
         {saving ? "Kaydediliyor…" : "Hareketi Ekle"}

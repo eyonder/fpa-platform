@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { apiClient, ApiError } from "@/frontend/lib/api-client";
+import { useDisplayCurrency } from "@/frontend/lib/display-currency";
 import type { VarianceReport } from "@/shared/types";
 
 interface Params {
@@ -34,7 +35,9 @@ export function useVarianceReport(params: Params) {
   const [reportKey, setReportKey] = useState<string | null>(null);
   const [error, setError] = useState<{ key: string; message: string } | null>(null);
 
-  const key = requestKey(params);
+  const { queryValue: displayCurrency } = useDisplayCurrency();
+  const baseKey = requestKey(params);
+  const key = baseKey ? `${baseKey}:${displayCurrency ?? "native"}` : null;
   const { budgetScenarioId, actualScenarioId, periodStart, periodEnd } = params;
 
   useEffect(() => {
@@ -47,6 +50,7 @@ export function useVarianceReport(params: Params) {
       periodStart: String(periodStart),
       periodEnd: String(periodEnd),
     });
+    if (displayCurrency) query.set("displayCurrency", displayCurrency);
 
     apiClient
       .get<VarianceReport>(`/variance?${query}`, { signal: controller.signal })
@@ -62,7 +66,14 @@ export function useVarianceReport(params: Params) {
       });
 
     return () => controller.abort();
-  }, [key, budgetScenarioId, actualScenarioId, periodStart, periodEnd]);
+  }, [
+    key,
+    budgetScenarioId,
+    actualScenarioId,
+    periodStart,
+    periodEnd,
+    displayCurrency,
+  ]);
 
   const state: State = !key
     ? { status: "loading" }
