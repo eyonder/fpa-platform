@@ -40,6 +40,7 @@ function toCashFlowEvent(row: CashFlowEventRow): CashFlowEvent {
     description: row.description,
     thpAccountCode: row.thpAccountCode,
     mappingConfigId: row.mappingConfigId,
+    treasuryImportBatchId: row.treasuryImportBatchId,
     createdByUserId: row.createdByUserId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -142,4 +143,62 @@ export const cashFlowEventRepository = {
     const result = await prisma.cashFlowEvent.deleteMany({ where: { id, tenantId } });
     return result.count > 0;
   },
+
+  /** THP içe aktarım sihirbazının commit adımı bunu çağırır (bkz.
+   * treasury-import.service.ts) — GEÇERLİ (mappingConfigId + CASH katmanı +
+   * çözümlenmiş vade + pozitif tutar) satırları topluca yazar. `client`
+   * parametresi ZORUNLU geçirilir (her zaman bir `withTenantTransaction`
+   * içinden çağrılır — senaryo kilidi kontrolüyle AYNI transaction). */
+  async createManyFromImport(
+    tenantId: string,
+    userId: string,
+    scenarioId: string,
+    treasuryImportBatchId: string,
+    rows: ValidThpImportRow[],
+    client: PrismaClientOrTx,
+  ): Promise<CashFlowEvent[]> {
+    await client.cashFlowEvent.createMany({
+      data: rows.map((r) => ({
+        id: crypto.randomUUID(),
+        tenantId,
+        scenarioId,
+        dueDate: new Date(r.dueDate),
+        direction: r.direction,
+        amountMinor: BigInt(toMinorUnits(r.amount)),
+        categoryId: r.categoryId,
+        counterparty: r.accountName,
+        source: "THP_IMPORT",
+        thpAccountCode: r.accountCode,
+        mappingConfigId: r.mappingConfigId,
+        treasuryImportBatchId,
+        createdByUserId: userId,
+      })),
+    });
+    return this.findByTreasuryImportBatch(tenantId, treasuryImportBatchId, client);
+  },
+
+  async findByTreasuryImportBatch(
+    tenantId: string,
+    treasuryImportBatchId: string,
+    client: PrismaClientOrTx = prismaAsTxClient,
+  ): Promise<CashFlowEvent[]> {
+    const rows = await client.cashFlowEvent.findMany({
+      where: { tenantId, treasuryImportBatchId },
+      orderBy: { dueDate: "asc" },
+    });
+    return rows.map(toCashFlowEvent);
+  },
 };
+
+/** `ThpPreviewRow`'un commit için DARALTILMIŞ (tüm alanları dolu) hali —
+ * `treasury-import.service.ts#commit` sadece bu şartları sağlayan satırları
+ * filtreleyip geçirir. */
+export interface ValidThpImportRow {
+  accountCode: string;
+  accountName: string | null;
+  amount: number;
+  dueDate: string;
+  direction: "INFLOW" | "OUTFLOW";
+  categoryId: string;
+  mappingConfigId: string;
+}

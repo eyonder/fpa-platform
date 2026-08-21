@@ -36,3 +36,35 @@ export const listCashFlowEventsSchema = z.object({
 });
 
 export type ListCashFlowEventsQuery = z.infer<typeof listCashFlowEventsSchema>;
+
+// ----------------------------------------------------
+// THP (Tek Düzen Hesap Planı) eşleştirme kuralları (Faz 4.2)
+// ----------------------------------------------------
+
+export const mappingLayerSchema = z.enum(["CASH", "ACCRUAL"]);
+
+// `layer`/`isActive` KASITLI `.optional()` — `.default()` DEĞİL: z.infer,
+// `.default()` alanlarını çıktıda ZORUNLU yapar, bu da shared/types/treasury.ts'teki
+// (frontend'in de kullandığı) `CreateMappingConfigInput` arayüzüyle
+// (opsiyonel) yapısal olarak UYUŞMAZ — bkz. sales.schema.ts'teki AYNI
+// tuzaktan kaçınma disiplini (CreateSalesOpportunityInput). Varsayılan değer
+// repository katmanında (`input.layer ?? "CASH"`) uygulanır.
+export const createMappingConfigSchema = z.object({
+  accountCode: z
+    .string()
+    .min(1, "Hesap kodu zorunludur.")
+    .max(20, "Hesap kodu en fazla 20 karakter olabilir."),
+  accountName: z.string().min(1, "Hesap adı zorunludur."),
+  categoryId: z.string().min(1, "categoryId zorunludur."),
+  direction: cashFlowDirectionSchema,
+  layer: mappingLayerSchema.optional(),
+  defaultTermDays: z.number().int().positive().optional(),
+  isActive: z.boolean().optional(),
+  note: z.string().optional(),
+});
+
+export type CreateMappingConfigInput = z.infer<typeof createMappingConfigSchema>;
+
+export const updateMappingConfigSchema = createMappingConfigSchema.partial();
+
+export type UpdateMappingConfigInput = z.infer<typeof updateMappingConfigSchema>;

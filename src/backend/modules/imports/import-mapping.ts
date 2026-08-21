@@ -41,7 +41,9 @@ function foldTurkish(text: string): string {
     .replace(/ç/g, "c");
 }
 
-function fold(text: string): string {
+// export edilir — treasury/thp-mapping.ts AYNI Türkçe katlama davranışına
+// ihtiyaç duyuyor (THP hesap adı eşleştirmesi için), kod tekrarı yerine.
+export function fold(text: string): string {
   return foldTurkish(normalize(text));
 }
 

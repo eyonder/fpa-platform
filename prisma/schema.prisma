@@ -58,6 +58,7 @@ model Tenant {
   mappingConfigs         MappingConfig[]
   bankBalances           BankBalance[]
   bankTransactions       BankTransaction[]
+  treasuryImportBatches  TreasuryImportBatch[]
 
   @@index([parentTenantId])
 }
@@ -194,6 +195,7 @@ model Scenario {
   // (nakit tarafı VE yumuşak tahakkuk referansı) — bkz. 14. bölüm notu.
   cashFlowEvents        CashFlowEvent[] @relation("TreasuryEventScenario")
   accrualCashFlowEvents CashFlowEvent[] @relation("TreasuryEventAccrualScenario")
+  treasuryImportBatches TreasuryImportBatch[]
 
   @@index([tenantId, name])
 }
@@ -828,19 +830,21 @@ model CashFlowEvent {
   counterparty String?
   description  String?
 
-  // Provenance (Faz 4.2'de dolar)
-  thpAccountCode  String?
-  mappingConfigId String?
+  // Provenance — THP içe aktarımından geldiyse dolar (bkz. TreasuryImportBatch, Faz 4.2).
+  thpAccountCode        String?
+  mappingConfigId       String?
+  treasuryImportBatchId String?
 
   createdByUserId String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  scenario        Scenario       @relation("TreasuryEventScenario", fields: [scenarioId], references: [id], onDelete: Cascade)
-  accrualScenario Scenario?      @relation("TreasuryEventAccrualScenario", fields: [accrualScenarioId], references: [id], onDelete: SetNull)
-  category        BudgetCategory @relation(fields: [categoryId], references: [id])
-  mappingConfig   MappingConfig? @relation(fields: [mappingConfigId], references: [id], onDelete: SetNull)
+  tenant          Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scenario        Scenario              @relation("TreasuryEventScenario", fields: [scenarioId], references: [id], onDelete: Cascade)
+  accrualScenario Scenario?             @relation("TreasuryEventAccrualScenario", fields: [accrualScenarioId], references: [id], onDelete: SetNull)
+  category        BudgetCategory        @relation(fields: [categoryId], references: [id])
+  mappingConfig   MappingConfig?        @relation(fields: [mappingConfigId], references: [id], onDelete: SetNull)
+  treasuryImport  TreasuryImportBatch?  @relation(fields: [treasuryImportBatchId], references: [id], onDelete: SetNull)
 
   // Ters ilişki — FK BankTransaction tarafındadır (bkz. o modeldeki not).
   matchedTransaction BankTransaction?
@@ -850,6 +854,7 @@ model CashFlowEvent {
   @@index([scenarioId, status])
   @@index([categoryId])
   @@index([mappingConfigId])
+  @@index([treasuryImportBatchId])
 }
 
 // THP (Tek Düzen Hesap Planı) kodu -> BudgetCategory eşleştirme kuralı.
@@ -940,4 +945,54 @@ model BankTransaction {
   @@index([tenantId])
   @@index([tenantId, valueDate])
   @@index([tenantId, matchedEventId])
+}
+
+// THP (Tek Düzen Hesap Planı) Excel içe aktarım sihirbazı (Faz 4.2) —
+// ImportJob'un ("İçe aktarma sihirbazı", bölüm 8) AYNI rawGrid deseni:
+// yeniden eşleştirme (remap) dosya tekrar yüklemeyi GEREKTİRMEZ. ImportJob'un
+// AKSİNE, çözümlenmiş önizleme satırları/sorunları (rows/issues) BURADA
+// SAKLANMAZ — her GET/remap/commit'te rawGrid + appliedMapping + O ANKİ
+// MappingConfig kurallarından YENİDEN hesaplanır (bkz.
+// treasury-import.service.ts#resolvePreview). Bu KASITLI: kullanıcı yeni bir
+// eşleştirme kuralı eklerse (ör. daha önce UNMAPPED olan "199" kodu için),
+// bekleyen bir içe aktarımın önizlemesi sayfa yenilendiğinde OTOMATİK
+// düzelir — payroll/depreciation/sales-forecast'teki "recompute, don't
+// persist" disipliniyle AYNI.
+model TreasuryImportBatch {
+  id         String @id
+  tenantId   String
+  scenarioId String
+
+  fileName String
+  status   TreasuryImportStatus @default(PENDING_REVIEW)
+  kind     TreasuryImportKind   @default(THP) // Faz 4.3'te BANK_STATEMENT eklenir, AYNI model paylaşılır
+
+  rawGrid        Json? // {headers, rows} — ham veri, commit sonrası Prisma.JsonNull ile temizlenir
+  appliedMapping Json? // ThpColumnMapping[] — null ise suggestTreasuryColumns() kullanılır
+
+  rowCount     Int @default(0)
+  mappedCount  Int @default(0)
+  skippedCount Int @default(0)
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scenario Scenario        @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  events   CashFlowEvent[]
+
+  @@index([tenantId])
+  @@index([scenarioId])
+}
+
+enum TreasuryImportStatus {
+  PENDING_REVIEW
+  COMMITTED
+  DISCARDED
+}
+
+enum TreasuryImportKind {
+  THP
+  BANK_STATEMENT
 }

@@ -90,7 +90,19 @@ export type {
   CashFlowEventSource,
   CashFlowEventStatus,
   CreateCashFlowEventInput,
+  CreateMappingConfigInput,
+  MappingConfigEntry,
+  MappingLayer,
+  ThpColumnMapping,
+  ThpPreviewRow,
+  ThpRowIssue,
+  ThpRowIssueCode,
+  ThpTargetField,
+  TreasuryImportBatch,
+  TreasuryImportKind,
+  TreasuryImportStatus,
   UpdateCashFlowEventInput,
+  UpdateMappingConfigInput,
 } from "./treasury";
 export type { Membership, Role, User } from "./user";
 export type { VarianceReport, VarianceRow, VarianceStatus } from "./variance";

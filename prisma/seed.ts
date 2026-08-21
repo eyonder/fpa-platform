@@ -92,12 +92,15 @@ async function resetDatabase() {
   await prisma.fixedAsset.deleteMany();
   await prisma.salesBillingMilestone.deleteMany();
   await prisma.salesOpportunity.deleteMany();
-  // Hazine (Treasury): BankTransaction -> CashFlowEvent -> MappingConfig,
-  // hepsi Scenario/BudgetCategory silinmeden ÖNCE (bkz. prisma/schema.prisma'daki
-  // 14. bölüm notu — CashFlowEvent'in ikisine de FK'sı var).
+  // Hazine (Treasury): BankTransaction -> CashFlowEvent -> (MappingConfig,
+  // TreasuryImportBatch), hepsi Scenario/BudgetCategory silinmeden ÖNCE
+  // (bkz. prisma/schema.prisma'daki 14. bölüm notu — CashFlowEvent'in
+  // üçüne de FK'sı var; TreasuryImportBatch.events TERS ilişkidir, FK
+  // fiziksel olarak CashFlowEvent tarafında).
   await prisma.bankTransaction.deleteMany();
   await prisma.cashFlowEvent.deleteMany();
   await prisma.mappingConfig.deleteMany();
+  await prisma.treasuryImportBatch.deleteMany();
   await prisma.bankBalance.deleteMany();
   await prisma.scenario.deleteMany();
   await prisma.employee.deleteMany();

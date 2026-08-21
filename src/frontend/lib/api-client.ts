@@ -55,6 +55,8 @@ export const apiClient = {
     request<T>(path, { ...init, method: "POST", body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown, init?: RequestInit) =>
     request<T>(path, { ...init, method: "PATCH", body: JSON.stringify(body) }),
+  delete: <T>(path: string, init?: RequestInit) =>
+    request<T>(path, { ...init, method: "DELETE" }),
   /** multipart/form-data gönderimi (dosya yükleme) için. */
   postForm: <T>(path: string, formData: FormData, init?: RequestInit) =>
     request<T>(path, { ...init, method: "POST", body: formData }),
